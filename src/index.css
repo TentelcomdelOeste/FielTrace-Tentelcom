@@ -1,18 +1,26 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
-html, body, #root {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overscroll-behavior: none;
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+:root {
+  --bg: #F1F3F5;
+  --card-bg: #FFFFFF;
+  --accent: #2563EB;
+  --text: #212529;
+}
+
+@layer base {
+  body {
+    @apply bg-[#F1F3F5] text-[#212529] font-sans antialiased;
+  }
 }
 
 /*
  * Hide ALL native video controls / play overlay on Android WebView.
- * The big circular PLAY icon comes from WebKit media controls when
- * mediaPlaybackRequiresUserGesture is true or video is paused.
+ * Combined with MainActivity setMediaPlaybackRequiresUserGesture(false).
  */
 video::-webkit-media-controls {
   display: none !important;
@@ -51,7 +59,6 @@ video {
   object-fit: cover !important;
 }
 
-/* Camera preview video must fill and ignore taps for controls */
 .camera-preview-video,
 .camera-preview-video video {
   width: 100% !important;
@@ -69,5 +76,9 @@ video {
 }
 
 .wireframe-body {
-  @apply p-4 space-y-3 bg-gray-50 flex-1;
+  @apply p-3 flex-1 space-y-2;
+}
+
+.technical-label {
+  @apply text-[9px] text-gray-400 uppercase font-bold block mb-1 tracking-wider;
 }

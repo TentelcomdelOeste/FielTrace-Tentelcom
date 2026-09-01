@@ -38,8 +38,67 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Disable automatic native capture on camera entry
-        run: python3 -c 'import re; from pathlib import Path; p=Path("src/App.tsx"); s=p.read_text(); pattern=r"\n\s*if \(Capacitor\.isNativePlatform\(\) && selectedProject\) \{\n\s*captureBatchPhoto\(\)\.finally\(\(\) => \{\n\s*setCurrentStep\(\x27history\x27\);\n\s*\}\);\n\s*\}"; new,count=re.subn(pattern,"\\n",s,count=1); assert count==1, "legacy automatic capture block not found"; p.write_text(new)'
+      - name: Configure native camera entry flow
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/App.tsx')
+          s = p.read_text()
+          old = '''  useEffect(() => {
+            let watchId: string | null = null;
+            if (currentStep === 'camera') {
+              locationService.watchPosition().then(id => {
+                watchId = id;
+              });
+              if (Capacitor.isNativePlatform() && selectedProject) {
+                captureBatchPhoto().finally(() => {
+                  setCurrentStep('history');
+                });
+              }
+            }
+            return () => {
+              if (watchId) {
+                locationService.clearWatch(watchId);
+              }
+            };
+          }, [currentStep, selectedProject]);'''
+          new = '''  useEffect(() => {
+            let watchId: string | null = null;
+            let active = true;
+            if (currentStep === 'camera') {
+              (async () => {
+                // 1) GPS primero: Android muestra aquí el permiso de ubicación.
+                if (Capacitor.isNativePlatform()) {
+                  await locationService.checkAndRequestPermissions();
+                  if (!active) return;
+                  await locationService.getCurrentPosition();
+                }
+
+                // 2) Mantener el GPS actualizado mientras estamos en cámara.
+                if (active) {
+                  watchId = await locationService.watchPosition();
+                }
+
+                // 3) En Android la cámara nativa se abre automáticamente al entrar.
+                // No regresamos a History después de la foto: el usuario queda en
+                // Field Trace y puede volver a abrir la cámara con el obturador.
+                if (Capacitor.isNativePlatform() && selectedProject && active) {
+                  await captureBatchPhoto();
+                }
+              })();
+            }
+            return () => {
+              active = false;
+              if (watchId) {
+                locationService.clearWatch(watchId);
+              }
+            };
+          }, [currentStep, selectedProject]);'''
+          if old not in s:
+              raise SystemExit('Expected camera-entry effect not found; refusing to build an unverified APK.')
+          p.write_text(s.replace(old, new, 1))
+          PY
 
       - name: Build web app
         run: npm run build
@@ -54,6 +113,27 @@ jobs:
           else
             echo "Complete Android platform already present; preserving it."
           fi
+
+      - name: Ensure Android runtime permissions in manifest
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text()
+          required = [
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.CAMERA" />',
+              '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />',
+              '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />',
+          ]
+          marker = '</manifest>'
+          missing = [x for x in required if x not in s]
+          if missing:
+              s = s.replace(marker, '\\n    ' + '\\n    '.join(missing) + '\\n' + marker)
+              p.write_text(s)
+          print('Verified Android camera/location permissions in manifest')
+          PY
 
       - name: Sync Capacitor Android
         run: npx cap sync android

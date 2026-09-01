@@ -99,13 +99,15 @@ jobs:
           missing = [x for x in required if x not in s]
           if missing:
               s = s.replace(marker, '\n    ' + '\n    '.join(missing) + '\n' + marker)
-          # Hardware acceleration helps WebView camera preview (avoids play overlay / black frames)
           if 'android:hardwareAccelerated="true"' not in s:
               s = s.replace('android:exported="true"', 'android:exported="true"\n            android:hardwareAccelerated="true"', 1)
           if 'android.hardware.camera' not in s:
-              s = s.replace('<!-- Permissions -->', '''<!-- Permissions -->
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />''')
+              feat = (
+                  '<!-- Permissions -->\n'
+                  '    <uses-feature android:name="android.hardware.camera" android:required="false" />\n'
+                  '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />'
+              )
+              s = s.replace('<!-- Permissions -->', feat)
           p.write_text(s)
           print('Verified Android camera/location/media permissions and hardware acceleration')
           PY

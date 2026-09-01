@@ -54,7 +54,7 @@ jobs:
               'cameraService.saveToGallery(finalImage, fileName)',
           ]
           required_storage = [
-              'La fotografía NO se persiste en IndexedDB',
+              'La fotograf\u00eda NO se persiste en IndexedDB',
               'firebaseService.syncEvidenceToCloud(evidenceToSave)',
           ]
           required_cam = [
@@ -83,61 +83,80 @@ jobs:
             echo "Complete Android platform already present; preserving it."
           fi
 
-      - name: Inject MainActivity (disable mediaPlaybackRequiresUserGesture)
+      - name: Ensure MainActivity (transparent poster + no gesture) is present
         shell: bash
         run: |
           set -euo pipefail
-          # Find package path from capacitor appId
           DEST="android/app/src/main/java/com/fieldtrace/app/MainActivity.java"
           mkdir -p "$(dirname "$DEST")"
-          if [ -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java ]; then
-            cp android/app/src/main/java/com/fieldtrace/app/MainActivity.java "$DEST"
-          fi
-          # Always write our fixed MainActivity (source of truth in repo)
-          if [ -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java ]; then
-            echo "MainActivity already in tree"
-          fi
-          # Also search any generated default and replace
-          cat > "$DEST" << 'JAVA'
+          # Prefer the version already in the repo tree (source of truth)
+          if [ -f "$DEST" ] && grep -q getDefaultVideoPoster "$DEST"; then
+            echo "MainActivity already has transparent poster fix"
+          else
+            cat > "$DEST" << 'JAVA'
           package com.fieldtrace.app;
 
+          import android.graphics.Bitmap;
+          import android.graphics.Canvas;
           import android.os.Bundle;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import com.getcapacitor.BridgeActivity;
+          import com.getcapacitor.BridgeWebChromeClient;
 
           public class MainActivity extends BridgeActivity {
             @Override
             public void onCreate(Bundle savedInstanceState) {
               super.onCreate(savedInstanceState);
-              try {
-                WebView webView = this.bridge.getWebView();
-                if (webView != null) {
-                  WebSettings settings = webView.getSettings();
-                  settings.setMediaPlaybackRequiresUserGesture(false);
-                  settings.setDomStorageEnabled(true);
-                  webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
-                }
-              } catch (Exception e) {}
+              applyCameraWebViewFixes();
             }
 
             @Override
             public void onStart() {
               super.onStart();
+              applyCameraWebViewFixes();
+            }
+
+            @Override
+            public void onResume() {
+              super.onResume();
+              applyCameraWebViewFixes();
+            }
+
+            private void applyCameraWebViewFixes() {
               try {
+                if (this.bridge == null) return;
                 WebView webView = this.bridge.getWebView();
-                if (webView != null) {
-                  webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-                }
+                if (webView == null) return;
+                WebSettings settings = webView.getSettings();
+                settings.setMediaPlaybackRequiresUserGesture(false);
+                settings.setDomStorageEnabled(true);
+                settings.setJavaScriptEnabled(true);
+                webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
+                webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
+                  @Override
+                  public Bitmap getDefaultVideoPoster() {
+                    Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+                    Canvas canvas = new Canvas(bitmap);
+                    canvas.drawARGB(0, 0, 0, 0);
+                    return bitmap;
+                  }
+                });
+                webView.post(() -> {
+                  try {
+                    webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+                  } catch (Exception ignored) {}
+                });
               } catch (Exception ignored) {}
             }
           }
           JAVA
-          # Fix leading spaces from heredoc if any
-          sed -i 's/^          //' "$DEST" || true
-          echo "--- MainActivity ---"
-          head -20 "$DEST"
-          # Remove any OTHER MainActivity.java that would conflict (wrong package)
+            sed -i 's/^          //' "$DEST" || true
+          fi
+          grep -q getDefaultVideoPoster "$DEST"
+          grep -q setMediaPlaybackRequiresUserGesture "$DEST"
+          echo "--- MainActivity OK ---"
+          head -25 "$DEST"
           find android/app/src/main/java -name 'MainActivity.java' ! -path '*com/fieldtrace/app/*' -print -delete || true
 
       - name: Ensure Android runtime permissions
@@ -179,7 +198,7 @@ jobs:
       - name: Sync Capacitor Android
         run: npx cap sync android
 
-      - name: Re-apply MainActivity after cap sync
+      - name: Re-apply MainActivity after cap sync (must keep transparent poster)
         shell: bash
         run: |
           DEST="android/app/src/main/java/com/fieldtrace/app/MainActivity.java"
@@ -187,41 +206,65 @@ jobs:
           cat > "$DEST" << 'JAVA'
           package com.fieldtrace.app;
 
+          import android.graphics.Bitmap;
+          import android.graphics.Canvas;
           import android.os.Bundle;
           import android.webkit.WebSettings;
           import android.webkit.WebView;
           import com.getcapacitor.BridgeActivity;
+          import com.getcapacitor.BridgeWebChromeClient;
 
           public class MainActivity extends BridgeActivity {
             @Override
             public void onCreate(Bundle savedInstanceState) {
               super.onCreate(savedInstanceState);
-              try {
-                WebView webView = this.bridge.getWebView();
-                if (webView != null) {
-                  WebSettings settings = webView.getSettings();
-                  settings.setMediaPlaybackRequiresUserGesture(false);
-                  settings.setDomStorageEnabled(true);
-                  webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
-                }
-              } catch (Exception e) {}
+              applyCameraWebViewFixes();
             }
 
             @Override
             public void onStart() {
               super.onStart();
+              applyCameraWebViewFixes();
+            }
+
+            @Override
+            public void onResume() {
+              super.onResume();
+              applyCameraWebViewFixes();
+            }
+
+            private void applyCameraWebViewFixes() {
               try {
+                if (this.bridge == null) return;
                 WebView webView = this.bridge.getWebView();
-                if (webView != null) {
-                  webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-                }
+                if (webView == null) return;
+                WebSettings settings = webView.getSettings();
+                settings.setMediaPlaybackRequiresUserGesture(false);
+                settings.setDomStorageEnabled(true);
+                settings.setJavaScriptEnabled(true);
+                webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
+                webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
+                  @Override
+                  public Bitmap getDefaultVideoPoster() {
+                    Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+                    Canvas canvas = new Canvas(bitmap);
+                    canvas.drawARGB(0, 0, 0, 0);
+                    return bitmap;
+                  }
+                });
+                webView.post(() -> {
+                  try {
+                    webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+                  } catch (Exception ignored) {}
+                });
               } catch (Exception ignored) {}
             }
           }
           JAVA
           sed -i 's/^          //' "$DEST" || true
+          grep -q getDefaultVideoPoster "$DEST"
           grep -q setMediaPlaybackRequiresUserGesture "$DEST"
-          echo "MainActivity re-applied after cap sync"
+          echo "MainActivity re-applied after cap sync with transparent poster"
 
       - name: Prepare Gradle
         working-directory: android

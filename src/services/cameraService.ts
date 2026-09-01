@@ -5,7 +5,6 @@
  */
 
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
-import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Media } from '@capacitor-community/media';
 import { Capacitor } from '@capacitor/core';
 
@@ -224,68 +223,68 @@ export const cameraService = {
   },
 
   /**
-   * MÉTODO MEJORADO: Guardado inteligente según plataforma
-   * Android/iOS → Galería nativa | Web → IndexedDB (sin descargas)
+   * Native gallery storage.
+   * Android requires an album identifier with @capacitor-community/media v9.
+   * The processed image is passed directly as a data URL; no Cache file is used.
    */
   async saveToGallery(dataUrl: string, fileName: string): Promise<boolean> {
     const platform = Capacitor.getPlatform();
-    const isWeb = platform === 'web';
-    const isAndroid = platform === 'android';
-    const isIOS = platform === 'ios';
 
-    console.log(`[Guardado] Plataforma detectada: ${platform}`);
-
-    // Android/iOS: Galería nativa
-    if (isAndroid || isIOS) {
-      return this._saveToNativeGallery(dataUrl, fileName);
+    if (platform === 'web') {
+      console.warn('[Gallery] Native gallery is unavailable on web.');
+      return false;
     }
 
-    // Web: IndexedDB local (sin descargas)
-    if (isWeb) {
-      console.log('[Guardado] Almacenamiento local (IndexedDB)...');
-      return this._saveToIndexedDB(dataUrl, fileName);
-    }
+    try {
+      const options: any = { path: dataUrl };
 
-    return false;
+      if (platform === 'android') {
+        options.albumIdentifier = await this.ensureFieldTraceAlbum();
+        // Media plugin expects the Android filename without the extension.
+        options.fileName = fileName.replace(/\.[^/.]+$/, '');
+      }
+
+      const result = await Media.savePhoto(options);
+      console.log('[Gallery] Photo saved successfully:', result);
+      return true;
+    } catch (error: any) {
+      console.error('[Gallery] Failed to save photo:', error?.code || error);
+      return false;
+    }
   },
 
   /**
-   * Galería nativa (Android/iOS)
+   * Find the app-owned Field Trace album or create it once.
+   * On Android the identifier must belong to the app's album path.
    */
-  async _saveToNativeGallery(
-    dataUrl: string,
-    fileName: string
-  ): Promise<boolean> {
-    try {
-      const base64Data = dataUrl.split(',')[1];
-      
-      const savedFile = await Filesystem.writeFile({
-        path: fileName,
-        data: base64Data,
-        directory: Directory.Cache,
-      });
+  async ensureFieldTraceAlbum(): Promise<string> {
+    const albumName = 'Field Trace';
+    const first = await Media.getAlbums();
+    const albumsPath = (await Media.getAlbumsPath()).path;
 
-      console.log(`[Nativo] Archivo temporal: ${savedFile.uri}`);
-      await Media.savePhoto({ path: savedFile.uri });
+    let album = first.albums.find(
+      (a) => a.name === albumName && a.identifier.startsWith(albumsPath)
+    );
 
-      console.log(`[Nativo] ✓ Foto guardada en galería: ${fileName}`);
-
-      // Limpiar archivo temporal de caché después de confirmar guardado exitoso
+    if (!album) {
       try {
-        await Filesystem.deleteFile({
-          path: fileName,
-          directory: Directory.Cache
-        });
-        console.log(`[Nativo] ✓ Archivo temporal de caché eliminado correctamente`);
-      } catch (cleanupErr) {
-        console.warn('[Nativo] No se pudo eliminar el archivo temporal de caché:', cleanupErr);
+        await Media.createAlbum({ name: albumName });
+      } catch (error: any) {
+        // The album can already exist while getAlbums() is still catching up.
+        console.warn('[Gallery] createAlbum:', error?.code || error);
       }
 
-      return true;
-    } catch (error) {
-      console.error('[Nativo] ✗ Error guardando en galería:', error);
-      return false;
+      const refreshed = await Media.getAlbums();
+      album = refreshed.albums.find(
+        (a) => a.name === albumName && a.identifier.startsWith(albumsPath)
+      );
     }
+
+    if (!album) {
+      throw new Error('FIELD_TRACE_ALBUM_NOT_FOUND');
+    }
+
+    return album.identifier;
   },
 
   /**

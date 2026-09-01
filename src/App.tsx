@@ -651,7 +651,27 @@ export default function App() {
                     imageSmoothing={true}
                     disablePictureInPicture={true}
                     screenshotQuality={0.92}
-                    onUserMedia={() => console.log('Camera ready')}
+                    onUserMedia={() => {
+                      console.log('Camera ready');
+                      requestAnimationFrame(() => {
+                        const video = webcamRef.current?.video;
+                        if (video) {
+                          video.muted = true;
+                          video.setAttribute('playsinline', 'true');
+                          void video.play().catch((err) => console.warn('Camera autoplay:', err));
+                        }
+                      });
+                    }}
+                    onLoadedMetadata={(event) => {
+                      const video = event.currentTarget;
+                      video.muted = true;
+                      video.setAttribute('playsinline', 'true');
+                      void video.play().catch((err) => console.warn('Camera autoplay:', err));
+                    }}
+                    autoPlay
+                    muted
+                    playsInline
+                    controls={false}
                     onUserMediaError={(err) => console.error('Camera error', err)}
                   />
                   

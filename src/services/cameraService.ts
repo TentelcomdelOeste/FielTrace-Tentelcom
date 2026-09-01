@@ -269,6 +269,18 @@ export const cameraService = {
       await Media.savePhoto({ path: savedFile.uri });
 
       console.log(`[Nativo] ✓ Foto guardada en galería: ${fileName}`);
+
+      // Limpiar archivo temporal de caché después de confirmar guardado exitoso
+      try {
+        await Filesystem.deleteFile({
+          path: fileName,
+          directory: Directory.Cache
+        });
+        console.log(`[Nativo] ✓ Archivo temporal de caché eliminado correctamente`);
+      } catch (cleanupErr) {
+        console.warn('[Nativo] No se pudo eliminar el archivo temporal de caché:', cleanupErr);
+      }
+
       return true;
     } catch (error) {
       console.error('[Nativo] ✗ Error guardando en galería:', error);

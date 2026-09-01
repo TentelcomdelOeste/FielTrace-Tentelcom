@@ -5,6 +5,7 @@
 
 export interface Project {
   id?: number;
+  uuid?: string;
   name: string;
   client: string;
   description?: string;
@@ -39,6 +40,13 @@ export interface Project {
   logoSize?: number;
   logoOpacity?: number;
   createdAt: Date;
+  updatedAt?: Date;
+  syncStatus?: 'pending' | 'synced' | 'failed';
+  syncCreatedAt?: Date;
+  syncUpdatedAt?: Date;
+  lastSyncedAt?: Date;
+  syncError?: string;
+  retryCount?: number;
 }
 
 export interface CustomField {
@@ -63,30 +71,46 @@ export enum SyncOperation {
 
 export interface Evidence {
   id?: number;
+  uuid?: string;
   projectId: number;
-  photoPath: string; // URL local o referencia a la galería
+  photoPath: string; // Referencia o nombre de archivo en la galería/almacenamiento del dispositivo
   fecha: string;
   hora: string;
+  timestamp?: number;
   latitude: number;
   longitude: number;
+  gpsAccuracy?: number;
   ubicacion: string;
   baseFields: BaseFields;
   customFields: CustomField[];
   sharedWhatsApp: boolean;
   createdAt: Date;
+  updatedAt?: Date;
   locked: boolean;
+  // Sync state prepared for future phases (Phase 2/3)
+  syncStatus?: 'pending' | 'synced' | 'failed';
+  syncCreatedAt?: Date;
+  syncUpdatedAt?: Date;
+  lastSyncedAt?: Date;
+  syncError?: string;
+  retryCount?: number;
 }
 
 export interface Template {
   id?: number;
+  uuid?: string;
   name: string;
   fields: CustomField[];
 }
 
 export interface SyncQueue {
   id?: number;
+  uuid?: string;
   entityType: 'project' | 'evidence';
-  entityId: number;
+  entityId: number | string;
   operation: SyncOperation;
   timestamp: Date;
+  status?: 'pending' | 'processing' | 'completed' | 'failed';
+  retryCount?: number;
+  error?: string;
 }

@@ -1,0 +1,233 @@
+name: Restore App.tsx from history
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/restore-app-from-history.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore App.tsx from known-good commit and apply critical fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Last known complete App.tsx before stub corruption
+          git show a465652e41031f7f47a4f7adc7789983752f7456:src/App.tsx > src/App.tsx
+          wc -l src/App.tsx
+          grep -q 'export default function App' src/App.tsx
+
+          python3 << 'PY'
+          from pathlib import Path
+          p = Path('src/App.tsx')
+          s = p.read_text()
+
+          # 1) Live overlay: SIN GPS instead of SINCAL / stale
+          s = s.replace(
+              "{gps ? `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}` : 'SINCAL...'}",
+              "{gps ? `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}` : 'SIN GPS'}"
+          )
+          s = s.replace(
+              "text-yellow-400 animate-pulse",
+              "text-amber-400"
+          )
+
+          # 2) facingMode ideal + lower resolution for faster WebView start
+          s = s.replace(
+              'facingMode: { exact: "environment" }',
+              'facingMode: { ideal: "environment" }'
+          )
+          s = s.replace('width: { ideal: 4096 }', 'width: { ideal: 1920 }')
+          s = s.replace('height: { ideal: 2160 }', 'height: { ideal: 1080 }')
+
+          # 3) Stronger autoplay on user media
+          old_oum = '''onUserMedia={() => {
+                      console.log('Camera ready');
+                      requestAnimationFrame(() => {
+                        const video = webcamRef.current?.video;
+                        if (video) {
+                          video.muted = true;
+                          video.setAttribute('playsinline', 'true');
+                          void video.play().catch((err) => console.warn('Camera autoplay:', err));
+                        }
+                      });
+                    }}'''
+          new_oum = '''onUserMedia={() => {
+                      console.log('Camera ready');
+                      const forcePlay = () => {
+                        const video = webcamRef.current?.video;
+                        if (!video) return;
+                        video.muted = true;
+                        video.playsInline = true;
+                        video.setAttribute('playsinline', 'true');
+                        video.setAttribute('webkit-playsinline', 'true');
+                        video.removeAttribute('controls');
+                        void video.play().catch(() => {});
+                      };
+                      forcePlay();
+                      requestAnimationFrame(forcePlay);
+                      setTimeout(forcePlay, 100);
+                      setTimeout(forcePlay, 400);
+                    }}'''
+          if old_oum in s:
+              s = s.replace(old_oum, new_oum)
+
+          # 4) forcePlay when entering camera step
+          old_ref = "  const webcamRef = useRef<Webcam>(null);\n\n  useEffect(() => {\n    loadData();"
+          new_ref = '''  const webcamRef = useRef<Webcam>(null);
+
+  useEffect(() => {
+    if (currentStep !== 'camera') return;
+    const forcePlay = () => {
+      const video = webcamRef.current?.video;
+      if (!video) return;
+      video.muted = true;
+      video.playsInline = true;
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+      video.removeAttribute('controls');
+      void video.play().catch(() => {});
+    };
+    forcePlay();
+    const t1 = setTimeout(forcePlay, 80);
+    const t2 = setTimeout(forcePlay, 300);
+    const t3 = setTimeout(forcePlay, 800);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, [currentStep]);
+
+  useEffect(() => {
+    loadData();'''
+          if old_ref in s:
+              s = s.replace(old_ref, new_ref)
+
+          # 5) Capture GPS: use null + gpsLabel when no fix
+          old_gps = '''      const { gps, locationData } = locationService.getCurrentState();
+      const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
+      const ubicacionText = currentFormattedLocation && currentFormattedLocation !== "Buscando..." 
+        ? currentFormattedLocation 
+        : "Pendiente de geocodificación";'''
+          new_gps = '''      const { gps, locationData } = locationService.getCurrentState();
+      const hasGps = !!(gps && gps.lat != null && gps.lon != null);
+      const gpsLabel = hasGps ? `${gps!.lat.toFixed(6)}, ${gps!.lon.toFixed(6)}` : 'SIN GPS';
+      const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
+      const ubicacionText = hasGps && currentFormattedLocation && currentFormattedLocation !== "Buscando..."
+        ? currentFormattedLocation
+        : (hasGps ? "Pendiente de geocodificación" : "");'''
+          if old_gps in s:
+              s = s.replace(old_gps, new_gps)
+
+          old_lat = '''        latitude: gps?.lat || 0,
+        longitude: gps?.lon || 0,
+        gpsAccuracy: gps?.accuracy,
+        gpsCapturedAt: capturedAt,
+        ubicacion: ubicacionText,'''
+          new_lat = '''        latitude: hasGps ? gps!.lat : null,
+        longitude: hasGps ? gps!.lon : null,
+        gpsAccuracy: hasGps ? gps!.accuracy : undefined,
+        gpsCapturedAt: hasGps ? capturedAt : undefined,
+        gpsLabel,
+        ubicacion: ubicacionText,'''
+          if old_lat in s:
+              s = s.replace(old_lat, new_lat)
+
+          # 6) History: metadata cards instead of loading images from IndexedDB
+          # Replace EvidenceImage component with EvidenceCard
+          import re
+          # Add EvidenceCard after LiveLocationOverlay closing
+          if 'const EvidenceCard' not in s:
+              card = r'''
+/** Metadata-only card — photos live only in native gallery "Field Trace" */
+const EvidenceCard = memo(({ evidence, onEdit }: { evidence: any; onEdit?: (ev: any) => void }) => {
+  const hasGps = evidence.latitude && evidence.longitude && !(evidence.latitude === 0 && evidence.longitude === 0);
+  const gpsText = evidence.gpsLabel || (hasGps
+    ? `${Number(evidence.latitude).toFixed(5)}, ${Number(evidence.longitude).toFixed(5)}`
+    : 'SIN GPS');
+  const tech = evidence.baseFields?.tecnico || '—';
+  const fields = (evidence.customFields || [])
+    .filter((f: any) => f.active !== false && f.showInPhoto)
+    .slice(0, 4);
+
+  return (
+    <div className="aspect-[4/5] rounded-[2rem] overflow-hidden border border-gray-100 relative shadow-sm bg-white flex flex-col p-4">
+      <div className="absolute top-3 left-3 w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]" />
+      <div className="mt-4 space-y-1.5 flex-1 min-h-0 overflow-hidden">
+        <p className="text-[10px] font-black uppercase text-gray-950 tracking-tight line-clamp-2">{evidence.projectName || 'Evidencia'}</p>
+        <p className="text-[9px] font-mono text-gray-500">{evidence.fecha} {evidence.hora || ''}</p>
+        <p className={`text-[9px] font-mono ${hasGps ? 'text-green-600' : 'text-amber-600'}`}>{gpsText}</p>
+        {evidence.ubicacion && evidence.ubicacion !== 'Pendiente de geocodificación' && evidence.ubicacion !== '' && (
+          <p className="text-[8px] text-gray-400 line-clamp-2 uppercase">{evidence.ubicacion}</p>
+        )}
+        <p className="text-[9px] font-bold text-gray-700 uppercase">{tech}</p>
+        {fields.map((f: any, i: number) => (
+          <p key={i} className="text-[8px] text-gray-500 uppercase truncate">{f.value ? `${f.name}: ${f.value}` : f.name}</p>
+        ))}
+      </div>
+      <div className="mt-auto pt-2 border-t border-gray-50 flex items-center justify-between gap-2">
+        <p className="text-[7px] text-gray-300 font-mono truncate flex-1" title={evidence.photoPath}>
+          ref: {evidence.photoPath || evidence.uuid || '—'}
+        </p>
+        {onEdit && (
+          <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(evidence); }}
+            className="text-[8px] font-black uppercase text-blue-600 px-2 py-1 rounded-lg bg-blue-50 shrink-0">
+            Editar
+          </button>
+        )}
+      </div>
+    </div>
+  );
+});
+'''
+              # Insert before EvidenceImage or before import Webcam
+              if 'const EvidenceImage' in s:
+                  s = s.replace('const EvidenceImage', card + '\nconst EvidenceImage')
+
+          # Replace history grid usage of EvidenceImage
+          hist_old = '''onClick={() => {
+                          // Allow viewing old photo in modal
+                          storageService.getPhotoBlob(ev.photoPath).then(url => {
+                            if (url) {
+                              setLastImage(url);
+                              setShowLastImage(true);
+                            }
+                          });
+                        }}
+                        className="aspect-[4/5] rounded-[2rem] overflow-hidden border border-gray-100 relative group shadow-sm bg-white cursor-pointer"
+                      >
+                        <EvidenceImage photoId={ev.photoPath} className="w-full h-full object-cover" />
+                        <div className="absolute top-3 left-3 flex gap-1">
+                           <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
+                        </div>
+                        <div className="absolute bottom-4 left-4 right-4 bg-black/60 backdrop-blur-xl px-3 py-2 rounded-xl">
+                           <p className="text-[8px] text-white font-black uppercase truncate tracking-tighter">{ev.baseFields.posteId}</p>
+                           <p className="text-[6px] text-white/60 font-mono italic">{ev.fecha}</p>
+                        </div>
+                      </motion.div>'''
+          hist_new = '''className="cursor-default"
+                      >
+                        <EvidenceCard evidence={ev} />
+                      </motion.div>'''
+          if hist_old in s:
+              s = s.replace(hist_old, hist_new)
+
+          p.write_text(s)
+          print('App.tsx patched successfully')
+          PY
+
+      - name: Commit restored App.tsx
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx
+          git status
+          git diff --cached --quiet && echo 'No changes' && exit 0
+          git commit -m "Restore App.tsx: camera autoplay, SIN GPS, metadata evidence cards"
+          git push

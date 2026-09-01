@@ -48,11 +48,11 @@ jobs:
           s = app.read_text()
           s = s.replace("import { Capacitor } from '@capacitor/core';\n", '')
 
-          old = '''      let rawImage: string | null = null;\n      const isNative = Capacitor.isNativePlatform();\n\n      if (isNative) {\n        rawImage = await cameraService.takePhoto();\n      } else {\n        if (!webcamRef.current) {\n          setIsProcessing(false);\n          return;\n        }\n        rawImage = webcamRef.current.getScreenshot();\n      }'''
-          new = '''      if (!webcamRef.current) {\n        setIsProcessing(false);\n        return;\n      }\n\n      const rawImage = webcamRef.current.getScreenshot();'''
-          if old not in s:
+          capture_pattern = re.compile(r"      let rawImage: string \| null = null;.*?      if \(!rawImage\) \{", re.S)
+          capture_replacement = '''      if (!webcamRef.current) {\n        setIsProcessing(false);\n        return;\n      }\n\n      const rawImage = webcamRef.current.getScreenshot();\n\n      if (!rawImage) {'''
+          s, count = capture_pattern.subn(capture_replacement, s, count=1)
+          if count != 1:
               raise SystemExit('Expected native capture block was not found')
-          s = s.replace(old, new, 1)
 
           start = '                  {Capacitor.isNativePlatform() ? ('
           end = '                  )}\n                  \n                  {/* Flash Feedback Layer */}'

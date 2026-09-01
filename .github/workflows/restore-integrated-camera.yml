@@ -1,69 +1,21 @@
 name: Restore integrated camera
 
+# DISABLED: This workflow looked for an old "native capture" code path that no longer exists.
+# The app now uses integrated react-webcam + Media.savePhoto on main.
+# Kept only as manual/workflow_dispatch in case historical recovery is needed.
+
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   restore-camera:
-    if: ${{ !contains(github.event.head_commit.message, 'Restore integrated camera implementation') }}
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Restore integrated webcam camera and gallery-only storage
-        shell: python
+      - name: Disabled notice
         run: |
-          from pathlib import Path
-          import re
-
-          app = Path('src/App.tsx')
-          s = app.read_text()
-
-          # Remove the native-camera bridge import; the integrated WebView camera is used again.
-          s = s.replace("import { Capacitor } from '@capacitor/core';\n", '')
-
-          # Restore direct integrated webcam capture.
-          old = '''      let rawImage: string | null = null;\n      const isNative = Capacitor.isNativePlatform();\n\n      if (isNative) {\n        rawImage = await cameraService.takePhoto();\n      } else {\n        if (!webcamRef.current) {\n          setIsProcessing(false);\n          return;\n        }\n        rawImage = webcamRef.current.getScreenshot();\n      }'''
-          new = '''      if (!webcamRef.current) {\n        setIsProcessing(false);\n        return;\n      }\n\n      const rawImage = webcamRef.current.getScreenshot();'''
-          if old not in s:
-              raise SystemExit('Expected native capture block was not found')
-          s = s.replace(old, new, 1)
-
-          # Replace only the native-camera placeholder with the integrated webcam preview.
-          start = '''                  {Capacitor.isNativePlatform() ? ('''
-          end = '''                  )}\n                  \n                  {/* Flash Feedback Layer */}'''
-          i = s.find(start)
-          if i < 0:
-              raise SystemExit('Expected native camera UI block was not found')
-          j = s.find(end, i)
-          if j < 0:
-              raise SystemExit('Expected end of native camera UI block was not found')
-
-          webcam = '''                  <Webcam\n                    audio={false}\n                    ref={webcamRef}\n                    screenshotFormat="image/jpeg"\n                    videoConstraints={{\n                      facingMode: { exact: "environment" },\n                      width: { ideal: 4096 },\n                      height: { ideal: 2160 }\n                    }}\n                    className="w-full h-full object-cover"\n                    mirrored={false}\n                    forceScreenshotSourceSize={true}\n                    imageSmoothing={true}\n                    disablePictureInPicture={true}\n                    screenshotQuality={0.92}\n                    onUserMedia={() => console.log('Camera ready')}\n                    onUserMediaError={(err) => console.error('Camera error', err)}\n                  />\n'''
-          s = s[:i] + webcam + s[j+len('                  )}\n'):]
-          app.write_text(s)
-
-          # Stop persisting image blobs in the app. Metadata remains available for records/sync.
-          storage = Path('src/services/storageService.ts')
-          t = storage.read_text()
-          t = t.replace("import { Capacitor } from '@capacitor/core';\n", '')
-          pattern = re.compile(r"\n\s*// En navegador web \(preview sin galería nativa\).*?\n\s*}\n\n\s*// Intentar sincronizar con Firebase", re.S)
-          replacement = "\n\n    // La fotografía NO se persiste en IndexedDB; se conserva únicamente en la galería del dispositivo.\n    // La evidencia almacenada aquí contiene solo metadatos para historial y sincronización.\n\n    // Intentar sincronizar con Firebase"
-          t2, n = pattern.subn(replacement, t, count=1)
-          if n != 1:
-              raise SystemExit('Expected web photo-storage block was not found')
-          storage.write_text(t2)
-
-      - name: Commit restored camera implementation
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/App.tsx src/services/storageService.ts
-          git diff --cached --quiet && exit 0
-          git commit -m "Restore integrated camera implementation"
-          git push
+          echo "This workflow is disabled on push. The integrated webcam + gallery flow is already on main."
+          echo "If you need to recover an old code path, update the search/replace blocks in this file first."
+          exit 0

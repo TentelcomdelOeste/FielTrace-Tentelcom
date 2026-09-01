@@ -74,16 +74,28 @@ if "if (currentStep !== 'camera') return" not in s:
         "    const t1 = setTimeout(forcePlay, 80);\n"
         "    const t2 = setTimeout(forcePlay, 300);\n"
         "    const t3 = setTimeout(forcePlay, 800);\n"
+        "    const iv = setInterval(forcePlay, 600);\n"
         "    const onPointer = () => forcePlay();\n"
         "    window.addEventListener('pointerdown', onPointer, { once: true });\n"
         "    return () => {\n"
-        "      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);\n"
+        "      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearInterval(iv);\n"
         "      window.removeEventListener('pointerdown', onPointer);\n"
         "    };\n"
         "  }, [currentStep]);\n\n"
     )
     if needle in s:
         s = s.replace(needle, insert, 1)
+else:
+    # Ensure continuous interval exists
+    if 'setInterval(forcePlay' not in s and "if (currentStep !== 'camera') return" in s:
+        s = s.replace(
+            "    forcePlay();\n    const t1 = setTimeout(forcePlay, 80);\n    const t2 = setTimeout(forcePlay, 300);\n    const t3 = setTimeout(forcePlay, 800);",
+            "    forcePlay();\n    const t1 = setTimeout(forcePlay, 80);\n    const t2 = setTimeout(forcePlay, 300);\n    const t3 = setTimeout(forcePlay, 800);\n    const iv = setInterval(forcePlay, 600);",
+        )
+        s = s.replace(
+            "      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);",
+            "      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearInterval(iv);",
+        )
 
 # 5) hasGps + gpsLabel on capture
 old_gps = (
@@ -191,6 +203,15 @@ if "showEvidenceList" not in s:
 if "setShowEvidenceList(true)" not in s and "showEvidenceList" in s:
     s = s.replace("onClick={() => setShowLastImage(true)}", "onClick={() => setShowEvidenceList(true)}", 1)
 
+# Gallery shutter button → evidence list
+_old_gallery_btn = """onClick={() => {
+                      if (lastImage) {
+                         setShowLastImage(true);
+                      }
+                    }}"""
+if _old_gallery_btn in s:
+    s = s.replace(_old_gallery_btn, "onClick={() => setShowEvidenceList(true)}")
+
 if "showEvidenceList &&" not in s and "showEvidenceList" in s:
     modal = """
         {showEvidenceList && (
@@ -213,11 +234,20 @@ if "showEvidenceList &&" not in s and "showEvidenceList" in s:
                 ))
               )}
             </div>
+            <p className="text-center text-[10px] text-white/70 py-3 bg-black">Las fotos estan en Galeria &gt; album Field Trace</p>
           </motion.div>
         )}
 """
     if "</AnimatePresence>" in s:
         s = s.replace("</AnimatePresence>", modal + "\n      </AnimatePresence>", 1)
+
+# Webcam CSS class
+if 'camera-preview-video' not in s and 'className="w-full h-full object-cover"' in s:
+    s = s.replace(
+        'className="w-full h-full object-cover"',
+        'className="w-full h-full object-cover camera-preview-video"',
+        1,
+    )
 
 if s != orig:
     p.write_text(s, encoding="utf-8")
@@ -244,3 +274,5 @@ print(f"forcePlay count: {text.count('forcePlay')}")
 print(f"EvidenceCard: {'EvidenceCard' in text}")
 print(f"showEvidenceList: {'showEvidenceList' in text}")
 print(f"gpsLabel: {'gpsLabel' in text}")
+print(f"setInterval: {'setInterval(forcePlay' in text}")
+print(f"camera-preview-video: {'camera-preview-video' in text}")

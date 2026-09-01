@@ -4,6 +4,7 @@
  */
 
 import { Geolocation } from '@capacitor/geolocation';
+import { Capacitor } from '@capacitor/core';
 
 let currentGps: { lat: number; lon: number; accuracy: number; timestamp?: number } | null = null;
 let currentLocationData: any = null;
@@ -42,8 +43,29 @@ export const locationService = {
     };
   },
 
+  async checkAndRequestPermissions(): Promise<boolean> {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const check = await Geolocation.checkPermissions();
+        if (check.location !== 'granted') {
+          const request = await Geolocation.requestPermissions();
+          if (request.location !== 'granted') {
+            return false;
+          }
+        }
+      } catch (e) {
+        console.warn('Error checking/requesting location permission:', e);
+        return false;
+      }
+    }
+    return true;
+  },
+
   async getCurrentPosition() {
     try {
+      const hasPermission = await this.checkAndRequestPermissions();
+      if (!hasPermission) return currentGps;
+
       const coordinates = await Geolocation.getCurrentPosition({
         enableHighAccuracy: true,
         timeout: 10000
@@ -65,6 +87,9 @@ export const locationService = {
 
   async watchPosition(callback?: (pos: any) => void) {
     try {
+      const hasPermission = await this.checkAndRequestPermissions();
+      if (!hasPermission) return null;
+
       return await Geolocation.watchPosition({
         enableHighAccuracy: true,
         timeout: 10000,

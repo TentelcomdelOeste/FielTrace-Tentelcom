@@ -172,13 +172,21 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-    const watchPromise = locationService.watchPosition();
-    return () => {
-      watchPromise.then(id => {
-        if (id) locationService.clearWatch(id);
-      });
-    };
   }, []);
+
+  useEffect(() => {
+    let watchId: string | null = null;
+    if (currentStep === 'camera') {
+      locationService.watchPosition().then(id => {
+        watchId = id;
+      });
+    }
+    return () => {
+      if (watchId) {
+        locationService.clearWatch(watchId);
+      }
+    };
+  }, [currentStep]);
 
   const loadData = async () => {
     const allProjects = await storageService.getAllProjects();

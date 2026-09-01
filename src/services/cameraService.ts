@@ -11,6 +11,21 @@ import { Capacitor } from '@capacitor/core';
 
 export const cameraService = {
   async takePhoto() {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const check = await Camera.checkPermissions();
+        if (check.camera !== 'granted') {
+          const request = await Camera.requestPermissions();
+          if (request.camera !== 'granted') {
+            throw new Error('Permiso de cámara denegado por el usuario');
+          }
+        }
+      } catch (e) {
+        console.error('Error al verificar o solicitar permiso de cámara:', e);
+        throw e;
+      }
+    }
+
     const image = await Camera.getPhoto({
       quality: 90,
       allowEditing: false,

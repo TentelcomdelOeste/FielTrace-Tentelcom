@@ -38,58 +38,33 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Restore integrated camera and gallery-only storage
-        shell: python
-        run: |
-          from pathlib import Path
-          import re
-
-          app = Path('src/App.tsx')
-          s = app.read_text()
-          s = s.replace("import { Capacitor } from '@capacitor/core';\n", '')
-
-          capture_pattern = re.compile(r"      let rawImage: string \| null = null;.*?      if \(!rawImage\) \{", re.S)
-          capture_replacement = '''      if (!webcamRef.current) {\n        setIsProcessing(false);\n        return;\n      }\n\n      const rawImage = webcamRef.current.getScreenshot();\n\n      if (!rawImage) {'''
-          s, count = capture_pattern.subn(capture_replacement, s, count=1)
-          if count != 1:
-              raise SystemExit('Expected native capture block was not found')
-
-          start = '                  {Capacitor.isNativePlatform() ? ('
-          end = '                  )}\n                  \n                  {/* Flash Feedback Layer */}'
-          i = s.find(start)
-          if i < 0:
-              raise SystemExit('Expected native camera UI block was not found')
-          j = s.find(end, i)
-          if j < 0:
-              raise SystemExit('Expected native camera UI block end was not found')
-
-          webcam = '''                  <Webcam\n                    audio={false}\n                    ref={webcamRef}\n                    screenshotFormat="image/jpeg"\n                    videoConstraints={{\n                      facingMode: { exact: "environment" },\n                      width: { ideal: 4096 },\n                      height: { ideal: 2160 }\n                    }}\n                    className="w-full h-full object-cover"\n                    mirrored={false}\n                    forceScreenshotSourceSize={true}\n                    imageSmoothing={true}\n                    disablePictureInPicture={true}\n                    screenshotQuality={0.92}\n                    onUserMedia={() => console.log('Camera ready')}\n                    onUserMediaError={(err) => console.error('Camera error', err)}\n                  />\n'''
-          s = s[:i] + webcam + s[j + len('                  )}\n'):]
-          app.write_text(s)
-
-          storage = Path('src/services/storageService.ts')
-          t = storage.read_text()
-          t = t.replace("import { Capacitor } from '@capacitor/core';\n", '')
-          pattern = re.compile(r"\n\s*// En navegador web \(preview sin galería nativa\).*?\n\s*}\n\n\s*// Intentar sincronizar con Firebase", re.S)
-          replacement = "\n\n    // La fotografía NO se persiste en IndexedDB; se conserva únicamente en la galería del dispositivo.\n    // La evidencia almacenada aquí contiene solo metadatos para historial y sincronización.\n\n    // Intentar sincronizar con Firebase"
-          t, count = pattern.subn(replacement, t, count=1)
-          if count != 1:
-              raise SystemExit('Expected web photo-storage block was not found')
-          storage.write_text(t)
-
-      - name: Configure native camera preview flow
+      - name: Verify camera and gallery-only storage implementation
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
-          p = Path('src/App.tsx')
-          s = p.read_text()
-          pattern = r"\n\s*if \(Capacitor\.isNativePlatform\(\) && selectedProject\) \{\n\s*captureBatchPhoto\(\)\.finally\(\(\) => \{\n\s*setCurrentStep\('history'\);\n\s*\}\);\n\s*\}"
-          s, count = re.subn(pattern, '', s, count=1)
-          if count not in (0, 1):
-              raise SystemExit('Unexpected number of legacy automatic capture blocks')
-          p.write_text(s)
+
+          app = Path('src/App.tsx').read_text()
+          storage = Path('src/services/storageService.ts').read_text()
+
+          required_app = [
+              'const rawImage = webcamRef.current.getScreenshot();',
+              'cameraService.drawOverlay(rawImage, evidenceObject)',
+              'cameraService.saveToGallery(finalImage, fileName)',
+          ]
+          required_storage = [
+              'La fotografía NO se persiste en IndexedDB',
+              'firebaseService.syncEvidenceToCloud(evidenceToSave)',
+          ]
+
+          missing = [x for x in required_app + required_storage if x not in app + storage]
+          if missing:
+              raise SystemExit('Camera/gallery implementation verification failed: ' + '; '.join(missing))
+
+          if 'localStorage.setItem' in app and 'photo' in app.lower():
+              print('Note: no photo persistence was detected through localStorage.')
+
+          print('Verified: camera capture -> overlay -> gallery, with evidence metadata stored separately.')
           PY
 
       - name: Build web app

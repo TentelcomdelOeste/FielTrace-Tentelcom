@@ -8,6 +8,7 @@
 
 import { Capacitor } from '@capacitor/core';
 import type { Project, Evidence, Template, SyncQueue } from '../types';
+import { firebaseService } from './firebaseService';
 
 const DB_NAME = 'FieldTraceDB';
 const DB_VERSION = 2;
@@ -205,7 +206,45 @@ export const storageService = {
       }
     }
 
+    // Intentar sincronizar con Firebase en segundo plano si hay internet (NO sube fotos, solo metadatos)
+    if (navigator.onLine) {
+      firebaseService.syncEvidenceToCloud(evidenceToSave).then(async (success) => {
+        if (success) {
+          evidenceToSave.syncStatus = 'synced';
+          evidenceToSave.lastSyncedAt = new Date();
+          if (evidenceId) {
+            await manager.put(STORE_EVIDENCES, { ...evidenceToSave, id: evidenceId });
+          }
+        }
+      }).catch(err => {
+        console.error('[StorageService] Background sync failed:', err);
+      });
+    }
+
     return evidenceId;
+  },
+
+  async syncPendingEvidences(): Promise<number> {
+    if (!navigator.onLine) return 0;
+    try {
+      const pendingEvidences = await this.getEvidencesBySyncStatus('pending');
+      let syncedCount = 0;
+      for (const ev of pendingEvidences) {
+        const success = await firebaseService.syncEvidenceToCloud(ev);
+        if (success) {
+          ev.syncStatus = 'synced';
+          ev.lastSyncedAt = new Date();
+          if (ev.id) {
+            await manager.put(STORE_EVIDENCES, ev);
+          }
+          syncedCount++;
+        }
+      }
+      return syncedCount;
+    } catch (e) {
+      console.error('[StorageService] Error syncing pending evidences:', e);
+      return 0;
+    }
   },
 
   /**

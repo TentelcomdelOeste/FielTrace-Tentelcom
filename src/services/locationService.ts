@@ -12,6 +12,9 @@ let lastGeocodeLat = 0;
 let lastGeocodeLon = 0;
 let lastGeocodeTime = 0;
 
+/** GPS older than this is treated as stale and shown as SIN GPS */
+const GPS_FRESH_MS = 90_000;
+
 const subscribers = new Set<() => void>();
 
 function notifySubscribers() {
@@ -22,12 +25,17 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
   const R = 6371000;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = 
-    Math.sin(dLat/2) * Math.sin(dLat/2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
-    Math.sin(dLon/2) * Math.sin(dLon/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+function isFresh(gps: typeof currentGps): boolean {
+  if (!gps || gps.timestamp == null) return false;
+  return Date.now() - gps.timestamp < GPS_FRESH_MS;
 }
 
 export const locationService = {
@@ -37,25 +45,35 @@ export const locationService = {
   },
 
   getCurrentState() {
+    // Only expose GPS if it is still fresh; otherwise UI/overlay show SIN GPS
+    const gps = isFresh(currentGps) ? currentGps : null;
     return {
-      gps: currentGps,
-      locationData: currentLocationData
+      gps,
+      locationData: gps ? currentLocationData : null
     };
+  },
+
+  /** Explicitly clear cached GPS (permission denied, location off, errors) */
+  clearGps() {
+    currentGps = null;
+    currentLocationData = null;
+    notifySubscribers();
   },
 
   async checkAndRequestPermissions(): Promise<boolean> {
     if (Capacitor.isNativePlatform()) {
-      // Flujo nativo: Verificar y solicitar permisos de GPS en tiempo de ejecución
       try {
         const check = await Geolocation.checkPermissions();
         if (check.location !== 'granted') {
           const request = await Geolocation.requestPermissions();
           if (request.location !== 'granted') {
+            this.clearGps();
             return false;
           }
         }
       } catch (e) {
         console.warn('Error checking/requesting location permission:', e);
+        this.clearGps();
         return false;
       }
     }
@@ -65,7 +83,10 @@ export const locationService = {
   async getCurrentPosition() {
     try {
       const hasPermission = await this.checkAndRequestPermissions();
-      if (!hasPermission) return currentGps;
+      if (!hasPermission) {
+        this.clearGps();
+        return null;
+      }
 
       const coordinates = await Geolocation.getCurrentPosition({
         enableHighAccuracy: true,
@@ -82,60 +103,74 @@ export const locationService = {
       return gps;
     } catch (error) {
       console.error('Error getting location', error);
-      return currentGps;
+      this.clearGps();
+      return null;
     }
+  },
+
+  /** Returns fresh GPS or null (never stale coordinates) */
+  async getFreshGps() {
+    if (isFresh(currentGps)) return currentGps;
+    return this.getCurrentPosition();
   },
 
   async watchPosition(callback?: (pos: any) => void) {
     try {
       const hasPermission = await this.checkAndRequestPermissions();
-      if (!hasPermission) return null;
+      if (!hasPermission) {
+        this.clearGps();
+        return null;
+      }
 
       return await Geolocation.watchPosition({
         enableHighAccuracy: true,
         timeout: 10000,
         maximumAge: 5000
-      }, async (position) => {
-        if (position) {
-          const gps = {
-            lat: position.coords.latitude,
-            lon: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            timestamp: position.timestamp || Date.now()
-          };
-          currentGps = gps;
-          
-          if (callback) callback(gps);
-          notifySubscribers();
+      }, async (position, err) => {
+        if (err || !position) {
+          // Location turned off or error → clear so overlay shows SIN GPS
+          this.clearGps();
+          return;
+        }
+        const gps = {
+          lat: position.coords.latitude,
+          lon: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          timestamp: position.timestamp || Date.now()
+        };
+        currentGps = gps;
 
-          if (navigator.onLine) {
-            const now = Date.now();
-            const distance = lastGeocodeLat && lastGeocodeLon 
-              ? calculateDistance(lastGeocodeLat, lastGeocodeLon, gps.lat, gps.lon) 
-              : 999;
-            
-            if (distance > 30 || (now - lastGeocodeTime > 60000)) {
-              lastGeocodeLat = gps.lat;
-              lastGeocodeLon = gps.lon;
-              lastGeocodeTime = now;
-              this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
-            }
+        if (callback) callback(gps);
+        notifySubscribers();
+
+        if (navigator.onLine) {
+          const now = Date.now();
+          const distance = lastGeocodeLat && lastGeocodeLon
+            ? calculateDistance(lastGeocodeLat, lastGeocodeLon, gps.lat, gps.lon)
+            : 999;
+
+          if (distance > 30 || (now - lastGeocodeTime > 60000)) {
+            lastGeocodeLat = gps.lat;
+            lastGeocodeLon = gps.lon;
+            lastGeocodeTime = now;
+            this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
           }
         }
       });
     } catch (e) {
       console.warn('Could not start watchPosition:', e);
+      this.clearGps();
       return null;
     }
   },
 
   async reverseGeocodeAndUpdate(lat: number, lon: number) {
-     if (!navigator.onLine) return;
-     const locData = await this.reverseGeocode(lat, lon);
-     if (locData) {
-        currentLocationData = locData;
-        notifySubscribers();
-     }
+    if (!navigator.onLine) return;
+    const locData = await this.reverseGeocode(lat, lon);
+    if (locData) {
+      currentLocationData = locData;
+      notifySubscribers();
+    }
   },
 
   async clearWatch(id: string) {
@@ -160,7 +195,7 @@ export const locationService = {
         }
       });
       clearTimeout(timeoutId);
-      
+
       const data = await response.json();
       if (data && data.address) {
         return {

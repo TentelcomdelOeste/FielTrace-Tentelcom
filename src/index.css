@@ -18,6 +18,28 @@
   }
 }
 
+/* Hide native video media controls (play button overlay on Android WebView) */
+video::-webkit-media-controls {
+  display: none !important;
+  -webkit-appearance: none;
+}
+video::-webkit-media-controls-enclosure {
+  display: none !important;
+}
+video::-webkit-media-controls-panel {
+  display: none !important;
+}
+video::-webkit-media-controls-play-button {
+  display: none !important;
+}
+video::-webkit-media-controls-start-playback-button {
+  display: none !important;
+  -webkit-appearance: none;
+}
+video {
+  outline: none;
+}
+
 .wireframe-container {
   @apply bg-white rounded-xl border border-gray-300 overflow-hidden flex flex-col shadow-sm transition-all hover:shadow-md;
 }

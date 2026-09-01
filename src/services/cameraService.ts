@@ -285,18 +285,50 @@ export const cameraService = {
 
   /**
    * Ensure the "Field Trace" album exists and return its identifier.
-   * Match by name only (identifier path format varies by Android version).
+   * On Android, match by name + identifier under getAlbumsPath() (plugin docs).
    */
   async ensureFieldTraceAlbum(): Promise<string> {
     if (_cachedAlbumIdentifier) {
       return _cachedAlbumIdentifier;
     }
 
-    const findByName = (albums: { name: string; identifier: string }[]) =>
-      albums.find((a) => a.name === ALBUM_NAME || a.name === 'FieldTrace' || a.name === 'Field_Trace');
+    let albumsPath = '';
+    try {
+      if (Capacitor.getPlatform() === 'android') {
+        const pathRes = await (Media as any).getAlbumsPath?.();
+        albumsPath = pathRes?.path || '';
+        console.log('[Gallery] albumsPath:', albumsPath);
+      }
+    } catch (e) {
+      console.warn('[Gallery] getAlbumsPath not available:', e);
+    }
 
-    let albums = (await Media.getAlbums()).albums;
-    let album = findByName(albums);
+    const isOurAlbum = (a: { name: string; identifier: string }) => {
+      const nameOk =
+        a.name === ALBUM_NAME ||
+        a.name === 'FieldTrace' ||
+        a.name === 'Field_Trace' ||
+        a.name === 'FieldTrace' ||
+        (a.name || '').toLowerCase().includes('field trace') ||
+        (a.name || '').toLowerCase().includes('fieldtrace');
+      if (!nameOk) return false;
+      if (albumsPath && a.identifier) {
+        return a.identifier.startsWith(albumsPath) || a.identifier.includes(ALBUM_NAME.replace(/\s/g, ''));
+      }
+      return true;
+    };
+
+    const findAlbum = (albums: { name: string; identifier: string }[]) =>
+      albums.find(isOurAlbum) ||
+      albums.find(
+        (a) =>
+          a.name === ALBUM_NAME ||
+          a.name === 'FieldTrace' ||
+          a.name === 'Field_Trace'
+      );
+
+    let albums = (await Media.getAlbums()).albums || [];
+    let album = findAlbum(albums);
 
     if (!album) {
       try {
@@ -306,16 +338,19 @@ export const cameraService = {
         console.warn('[Gallery] createAlbum:', error?.code || error?.message || error);
       }
 
-      await new Promise((r) => setTimeout(r, 250));
-      albums = (await Media.getAlbums()).albums;
-      album = findByName(albums);
+      await new Promise((r) => setTimeout(r, 350));
+      albums = (await Media.getAlbums()).albums || [];
+      album = findAlbum(albums);
     }
 
     if (!album) {
-      await new Promise((r) => setTimeout(r, 400));
-      albums = (await Media.getAlbums()).albums;
-      album = findByName(albums);
-      console.log('[Gallery] Albums after wait:', albums.map((a) => a.name));
+      await new Promise((r) => setTimeout(r, 500));
+      albums = (await Media.getAlbums()).albums || [];
+      album = findAlbum(albums);
+      console.log(
+        '[Gallery] Albums after wait:',
+        albums.map((a) => `${a.name} => ${a.identifier}`)
+      );
     }
 
     if (!album) {

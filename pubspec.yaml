@@ -1,0 +1,29 @@
+name: field_trace
+description: Technical field evidence application.
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  camera: ^0.10.5
+  geolocator: ^10.1.0
+  gallery_saver: ^2.3.2
+  share_plus: ^7.2.2
+  excel: ^4.0.0
+  pdf: ^3.10.4
+  path_provider: ^2.1.1
+  intl: ^0.18.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.6
+
+flutter:
+  uses-material-design: true

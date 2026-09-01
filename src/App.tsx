@@ -180,13 +180,18 @@ export default function App() {
       locationService.watchPosition().then(id => {
         watchId = id;
       });
+      if (Capacitor.isNativePlatform() && selectedProject) {
+        captureBatchPhoto().then(() => {
+          setCurrentStep('history');
+        });
+      }
     }
     return () => {
       if (watchId) {
         locationService.clearWatch(watchId);
       }
     };
-  }, [currentStep]);
+  }, [currentStep, selectedProject]);
 
   const loadData = async () => {
     const allProjects = await storageService.getAllProjects();

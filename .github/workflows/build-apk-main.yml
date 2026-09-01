@@ -35,11 +35,28 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
+      # npm ci stops when package.json and package-lock.json are out of sync.
+      # npm install resolves and refreshes the lockfile in the CI workspace so
+      # a dependency update cannot prevent the APK build from starting.
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Build web app
         run: npm run build
+
+      # The repository may contain only android/app (an incomplete native
+      # platform). Generate the official Capacitor Android project when the
+      # Gradle root/wrapper is missing. If it is already complete, preserve it.
+      - name: Ensure complete Capacitor Android platform
+        shell: bash
+        run: |
+          if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            echo "Incomplete Android platform detected; regenerating with Capacitor."
+            rm -rf android
+            npx cap add android
+          else
+            echo "Complete Android platform already present; preserving it."
+          fi
 
       - name: Sync Capacitor Android
         run: npx cap sync android

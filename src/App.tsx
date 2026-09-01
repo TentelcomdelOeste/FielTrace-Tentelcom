@@ -421,8 +421,8 @@ export default function App() {
             return;
           }
 
-          // 3. Guardar Evidence en IndexedDB solo tras confirmar éxito de fotografía
-          await storageService.addEvidence(evidenceObject, finalImage);
+          // 3. Guardar Evidence en IndexedDB solo tras confirmar éxito de fotografía (en Android no se duplica la foto en IndexedDB)
+          await storageService.addEvidence(evidenceObject, Capacitor.getPlatform() === 'web' ? finalImage : undefined);
 
           // 4. Actualizar estado de UI
           const evs = await storageService.getEvidencesByProject(selectedProject.id!);

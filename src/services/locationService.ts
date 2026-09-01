@@ -5,14 +5,28 @@
 
 import { Geolocation } from '@capacitor/geolocation';
 
-let currentGps: { lat: number; lon: number; accuracy: number } | null = null;
+let currentGps: { lat: number; lon: number; accuracy: number; timestamp?: number } | null = null;
 let currentLocationData: any = null;
+let lastGeocodeLat = 0;
+let lastGeocodeLon = 0;
 let lastGeocodeTime = 0;
 
 const subscribers = new Set<() => void>();
 
 function notifySubscribers() {
   subscribers.forEach(cb => cb());
+}
+
+function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
 }
 
 export const locationService = {
@@ -34,45 +48,63 @@ export const locationService = {
         enableHighAccuracy: true,
         timeout: 10000
       });
-      return {
+      const gps = {
         lat: coordinates.coords.latitude,
         lon: coordinates.coords.longitude,
-        accuracy: coordinates.coords.accuracy
+        accuracy: coordinates.coords.accuracy,
+        timestamp: coordinates.timestamp || Date.now()
       };
+      currentGps = gps;
+      notifySubscribers();
+      return gps;
     } catch (error) {
       console.error('Error getting location', error);
-      return null;
+      return currentGps;
     }
   },
 
   async watchPosition(callback?: (pos: any) => void) {
-    return await Geolocation.watchPosition({
-      enableHighAccuracy: true,
-      timeout: 10000
-    }, async (position) => {
-      if (position) {
-        const gps = {
-          lat: position.coords.latitude,
-          lon: position.coords.longitude,
-          accuracy: position.coords.accuracy
-        };
-        currentGps = gps;
-        
-        if (callback) callback(gps);
-        
-        const now = Date.now();
-        // Allow re-geocode if 5s passed
-        if (now - lastGeocodeTime > 5000) {
-           lastGeocodeTime = now;
-           this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
-        } else {
-           notifySubscribers();
+    try {
+      return await Geolocation.watchPosition({
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 5000
+      }, async (position) => {
+        if (position) {
+          const gps = {
+            lat: position.coords.latitude,
+            lon: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: position.timestamp || Date.now()
+          };
+          currentGps = gps;
+          
+          if (callback) callback(gps);
+          notifySubscribers();
+
+          if (navigator.onLine) {
+            const now = Date.now();
+            const distance = lastGeocodeLat && lastGeocodeLon 
+              ? calculateDistance(lastGeocodeLat, lastGeocodeLon, gps.lat, gps.lon) 
+              : 999;
+            
+            if (distance > 30 || (now - lastGeocodeTime > 60000)) {
+              lastGeocodeLat = gps.lat;
+              lastGeocodeLon = gps.lon;
+              lastGeocodeTime = now;
+              this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+            }
+          }
         }
-      }
-    });
+      });
+    } catch (e) {
+      console.warn('Could not start watchPosition:', e);
+      return null;
+    }
   },
 
   async reverseGeocodeAndUpdate(lat: number, lon: number) {
+     if (!navigator.onLine) return;
      const locData = await this.reverseGeocode(lat, lon);
      if (locData) {
         currentLocationData = locData;
@@ -81,10 +113,15 @@ export const locationService = {
   },
 
   async clearWatch(id: string) {
-    await Geolocation.clearWatch({ id });
+    try {
+      await Geolocation.clearWatch({ id });
+    } catch (e) {
+      // ignore
+    }
   },
 
   async reverseGeocode(lat: number, lon: number): Promise<any> {
+    if (!navigator.onLine) return null;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
 

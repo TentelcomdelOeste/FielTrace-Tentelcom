@@ -6,44 +6,24 @@
 
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Media } from '@capacitor-community/media';
-import { Geolocation } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 
 export const cameraService = {
   async takePhoto(): Promise<string | null> {
     if (Capacitor.isNativePlatform()) {
-      // El efecto de React que entra a la vista de cámara también puede llamar
-      // esta función. Solo una pulsación real del usuario debe abrir la cámara.
-      const userActivation = (navigator as any).userActivation;
-      if (userActivation && !userActivation.isActive) {
-        console.info('[Cámara] Llamada automática ignorada; esperando pulsación del obturador.');
-        return null;
-      }
-
-      // Primero pedimos GPS. Esto evita que el diálogo de ubicación compita
-      // con la Activity nativa de la cámara.
+      // Pedimos explícitamente cámara antes de abrir la Activity nativa.
       try {
-        const locationCheck = await Geolocation.checkPermissions();
-        if (locationCheck.location !== 'granted') {
-          const locationRequest = await Geolocation.requestPermissions();
-          if (locationRequest.location !== 'granted') {
-            console.warn('[GPS] Permiso de ubicación no concedido.');
+        const check = await Camera.checkPermissions();
+        if (check.camera !== 'granted') {
+          const request = await Camera.requestPermissions({ permissions: ['camera'] });
+          if (request.camera !== 'granted') {
+            console.warn('[Cámara] Permiso de cámara no concedido.');
+            return null;
           }
         }
       } catch (e) {
-        console.warn('[GPS] No se pudo solicitar ubicación antes de la cámara:', e);
-      }
-
-      // Capacitor Camera moderno no necesita un diálogo de permiso de cámara
-      // para lanzar la Activity de cámara. Android gestiona la cámara nativa.
-      try {
-        const check = await Camera.checkPermissions();
-        if (check.camera === 'denied') {
-          console.warn('[Cámara] Android reportó permiso de cámara denegado.');
-          return null;
-        }
-      } catch (e) {
-        console.warn('[Cámara] No se pudo consultar el estado del permiso:', e);
+        console.error('[Cámara] Error solicitando permiso:', e);
+        return null;
       }
     }
 
@@ -65,15 +45,10 @@ export const cameraService = {
 
   async drawOverlay(imageSrc: string, metadata: any): Promise<string> {
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        console.warn('drawOverlay timed out, returning original image');
-        resolve(imageSrc);
-      }, 5000);
-
+      const timeout = setTimeout(() => resolve(imageSrc), 5000);
       const img = new Image();
       img.onerror = () => {
         clearTimeout(timeout);
-        console.error('Error loading image for overlay');
         resolve(imageSrc);
       };
       img.onload = () => {
@@ -84,7 +59,6 @@ export const cameraService = {
           canvas.height = img.height;
           const ctx = canvas.getContext('2d');
           if (!ctx) return resolve(imageSrc);
-
           ctx.drawImage(img, 0, 0);
 
           const position = metadata.settings?.overlayPosition || 'top-left';
@@ -93,10 +67,8 @@ export const cameraService = {
           const overlayColor = metadata.settings?.overlayColor || '#FFFFFF';
           const baseSize = Math.max(24, Math.floor(canvas.width / 40));
           let fontSize = baseSize;
-
-          if (fontSizeValue) {
-            fontSize = (fontSizeValue / 100) * (canvas.width / 10);
-          } else {
+          if (fontSizeValue) fontSize = (fontSizeValue / 100) * (canvas.width / 10);
+          else {
             if (fontSizeScale === 'small') fontSize = baseSize * 0.7;
             if (fontSizeScale === 'large') fontSize = baseSize * 1.5;
           }
@@ -107,61 +79,47 @@ export const cameraService = {
           ctx.textBaseline = 'top';
 
           const rawLines: string[] = [];
-          if (metadata.projectName) rawLines.push(`${metadata.projectName.toUpperCase()}`);
-          if (metadata.settings?.showDateTime && metadata.dateTimeFormatted) rawLines.push(`${metadata.dateTimeFormatted}`);
+          if (metadata.projectName) rawLines.push(metadata.projectName.toUpperCase());
+          if (metadata.settings?.showDateTime && metadata.dateTimeFormatted) rawLines.push(metadata.dateTimeFormatted);
           if (metadata.settings?.showGps) {
             const lat = Number(metadata.latitude);
             const lon = Number(metadata.longitude);
             rawLines.push(`${lat.toFixed(6)}, ${lon.toFixed(6)}`);
           }
-          if (metadata.settings?.showLocation && metadata.ubicacion) rawLines.push(`${metadata.ubicacion.toUpperCase()}`);
-          if (metadata.settings?.showTech) rawLines.push(`${metadata.baseFields?.tecnico || 'N/A'}`);
-
+          if (metadata.settings?.showLocation && metadata.ubicacion) rawLines.push(metadata.ubicacion.toUpperCase());
+          if (metadata.settings?.showTech) rawLines.push(metadata.baseFields?.tecnico || 'N/A');
           (metadata.customFields || []).forEach((cf: any) => {
-            if (cf.active !== false && cf.showInPhoto) {
-              if (cf.value && cf.value.trim() !== '') {
-                rawLines.push(`${cf.name.toUpperCase()}: ${cf.value.toUpperCase()}`);
-              } else if (cf.name) {
-                rawLines.push(`${cf.name.toUpperCase()}`);
-              }
+            if (cf.active !== false && cf.showInPhoto && cf.name) {
+              rawLines.push(cf.value && cf.value.trim() !== '' ? `${cf.name.toUpperCase()}: ${cf.value.toUpperCase()}` : cf.name.toUpperCase());
             }
           });
-
           if (rawLines.length === 0) return resolve(imageSrc);
 
-          const p_overlayPos = metadata.settings?.overlayPosition || 'top-left';
-          const p_logoPos = metadata.settings?.logoPosition || 'top-left';
+          const pOverlay = metadata.settings?.overlayPosition || 'top-left';
+          const pLogo = metadata.settings?.logoPosition || 'top-left';
           const hasLogo = !!metadata.settings?.logoImage;
           const logoSizeSetting = metadata.settings?.logoSize || 20;
           const logoCanvasWidth = (canvas.width * logoSizeSetting) / 100;
-          const isSameYAndDifferentX =
-            (p_overlayPos.includes('top') && p_logoPos.includes('top') && p_overlayPos !== p_logoPos) ||
-            (p_overlayPos.includes('bottom') && p_logoPos.includes('bottom') && p_overlayPos !== p_logoPos);
-          const maxTextWidth = (hasLogo && isSameYAndDifferentX)
-            ? canvas.width - (3 * margin) - logoCanvasWidth
-            : canvas.width - (2 * margin);
+          const sameYDifferentX = (pOverlay.includes('top') && pLogo.includes('top') && pOverlay !== pLogo) || (pOverlay.includes('bottom') && pLogo.includes('bottom') && pOverlay !== pLogo);
+          const maxTextWidth = hasLogo && sameYDifferentX ? canvas.width - (3 * margin) - logoCanvasWidth : canvas.width - (2 * margin);
 
           const lines: string[] = [];
           for (const rawLine of rawLines) {
-            const subLines = rawLine.split('\n');
-            for (const subLine of subLines) {
+            for (const subLine of rawLine.split('\n')) {
               const words = subLine.split(' ');
               let currentLine = words[0] || '';
               let subLineCount = 1;
               for (let i = 1; i < words.length; i++) {
-                const word = words[i];
-                const testLine = currentLine + ' ' + word;
+                const testLine = currentLine + ' ' + words[i];
                 if (ctx.measureText(testLine).width > maxTextWidth) {
                   if (subLineCount >= 4) {
                     currentLine += '...';
                     break;
                   }
                   lines.push(currentLine);
-                  currentLine = word;
+                  currentLine = words[i];
                   subLineCount++;
-                } else {
-                  currentLine = testLine;
-                }
+                } else currentLine = testLine;
               }
               if (currentLine) lines.push(currentLine);
             }
@@ -178,13 +136,12 @@ export const cameraService = {
             ctx.textAlign = 'left';
             if (position === 'bottom-left') startY = canvas.height - totalHeight - margin;
           }
-
-          ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+          ctx.shadowColor = 'rgba(0,0,0,0.9)';
           ctx.shadowBlur = 12;
           ctx.shadowOffsetX = 3;
           ctx.shadowOffsetY = 3;
           ctx.fillStyle = overlayColor;
-          lines.forEach((line, index) => ctx.fillText(line, startX, startY + index * lineHeight));
+          lines.forEach((line, i) => ctx.fillText(line, startX, startY + i * lineHeight));
           ctx.textAlign = 'left';
 
           if (metadata.settings?.logoImage) {
@@ -197,8 +154,7 @@ export const cameraService = {
                 const targetWidth = (canvas.width * logoSize) / 100;
                 const ratio = logoImg.height / logoImg.width;
                 const targetHeight = targetWidth * ratio;
-                let logoX = margin;
-                let logoY = margin;
+                let logoX = margin, logoY = margin;
                 if (logoPosition === 'top-right') logoX = canvas.width - targetWidth - margin;
                 if (logoPosition === 'bottom-left') logoY = canvas.height - targetHeight - margin;
                 if (logoPosition === 'bottom-right') {
@@ -213,16 +169,12 @@ export const cameraService = {
                 ctx.shadowOffsetY = 0;
                 ctx.drawImage(logoImg, logoX, logoY, targetWidth, targetHeight);
                 ctx.restore();
-                resolve(canvas.toDataURL('image/jpeg', 0.92));
-              } catch {
-                resolve(canvas.toDataURL('image/jpeg', 0.92));
-              }
+              } catch {}
+              resolve(canvas.toDataURL('image/jpeg', 0.92));
             };
             logoImg.onerror = () => resolve(canvas.toDataURL('image/jpeg', 0.92));
             logoImg.src = metadata.settings.logoImage;
-          } else {
-            resolve(canvas.toDataURL('image/jpeg', 0.92));
-          }
+          } else resolve(canvas.toDataURL('image/jpeg', 0.92));
         } catch (err) {
           console.error('Error drawing overlay:', err);
           resolve(imageSrc);
@@ -233,40 +185,40 @@ export const cameraService = {
   },
 
   async saveToGallery(dataUrl: string, fileName: string): Promise<boolean> {
-    const platform = Capacitor.getPlatform();
-    if (platform === 'web') return this._saveToIndexedDB(dataUrl, fileName);
-    if (platform === 'android' || platform === 'ios') return this._saveToNativeGallery(dataUrl, fileName);
+    if (Capacitor.getPlatform() === 'web') return this._saveToIndexedDB(dataUrl, fileName);
+    if (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios') return this._saveToNativeGallery(dataUrl, fileName);
     return false;
   },
 
   async _saveToNativeGallery(dataUrl: string, fileName: string): Promise<boolean> {
     try {
-      // Media 9.x (Capacitor 8) guarda directamente data:image/jpeg;base64,...
-      // y en Android requiere un albumIdentifier.
+      // Media 9.x acepta directamente data:image/jpeg;base64,... .
+      // En Android el albumIdentifier es obligatorio.
       let albums = await Media.getAlbums();
       let album = albums.albums.find((a: any) => a.name === 'Field Trace');
-
       if (!album) {
         try {
           await Media.createAlbum({ name: 'Field Trace' });
           albums = await Media.getAlbums();
           album = albums.albums.find((a: any) => a.name === 'Field Trace');
-        } catch (albumError) {
-          console.warn('[Galería] No se pudo crear/obtener el álbum Field Trace:', albumError);
+        } catch (e) {
+          console.warn('[Galería] No se pudo crear el álbum:', e);
         }
       }
-
+      if (Capacitor.getPlatform() === 'android' && !album?.identifier) {
+        console.error('[Galería] No se encontró el identificador del álbum Field Trace.');
+        return false;
+      }
       const baseName = fileName.replace(/\.[^.]+$/, '');
-      const result = await Media.savePhoto({
+      await Media.savePhoto({
         path: dataUrl,
-        ...(album?.identifier ? { albumIdentifier: album.identifier } : {}),
+        albumIdentifier: album?.identifier,
         fileName: baseName
       });
-
-      console.log('[Galería] ✓ Fotografía guardada:', result);
+      console.log('[Galería] ✓ Foto guardada en Field Trace');
       return true;
     } catch (error: any) {
-      console.error('[Galería] ✗ Error guardando fotografía:', error?.code || error?.message || error);
+      console.error('[Galería] ✗ Error:', error?.code || error?.message || error);
       return false;
     }
   },
@@ -282,15 +234,12 @@ export const cameraService = {
         };
         request.onsuccess = () => {
           const db = request.result;
-          const transaction = db.transaction('photos', 'readwrite');
-          const store = transaction.objectStore('photos');
-          const addRequest = store.put({ fileName, dataUrl, timestamp: new Date().toISOString(), size: dataUrl.length / 1024 });
-          addRequest.onsuccess = () => resolve(true);
-          addRequest.onerror = () => resolve(false);
+          const tx = db.transaction('photos', 'readwrite');
+          const req = tx.objectStore('photos').put({ fileName, dataUrl, timestamp: new Date().toISOString(), size: dataUrl.length / 1024 });
+          req.onsuccess = () => resolve(true);
+          req.onerror = () => resolve(false);
         };
-      } catch {
-        resolve(false);
-      }
+      } catch { resolve(false); }
     });
   },
 
@@ -299,10 +248,9 @@ export const cameraService = {
       const request = indexedDB.open('FieldTracePhotos', 1);
       request.onsuccess = () => {
         const db = request.result;
-        const transaction = db.transaction('photos', 'readonly');
-        const store = transaction.objectStore('photos');
-        const getAllRequest = store.getAll();
-        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+        const req = db.transaction('photos', 'readonly').objectStore('photos').getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => resolve([]);
       };
       request.onerror = () => resolve([]);
     });
@@ -313,11 +261,9 @@ export const cameraService = {
       const request = indexedDB.open('FieldTracePhotos', 1);
       request.onsuccess = () => {
         const db = request.result;
-        const transaction = db.transaction('photos', 'readonly');
-        const store = transaction.objectStore('photos');
-        const getRequest = store.get(fileName);
-        getRequest.onsuccess = () => {
-          const photo = getRequest.result;
+        const req = db.transaction('photos', 'readonly').objectStore('photos').get(fileName);
+        req.onsuccess = () => {
+          const photo = req.result;
           if (photo) {
             const link = document.createElement('a');
             link.href = photo.dataUrl;
@@ -328,6 +274,7 @@ export const cameraService = {
           }
           resolve();
         };
+        req.onerror = () => resolve();
       };
       request.onerror = () => resolve();
     });

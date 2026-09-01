@@ -20,43 +20,40 @@
 
 /*
  * Hide ALL native video controls / play overlay on Android WebView.
- * Combined with MainActivity setMediaPlaybackRequiresUserGesture(false).
+ * Combined with MainActivity setMediaPlaybackRequiresUserGesture(false)
+ * + transparent getDefaultVideoPoster().
  */
-video::-webkit-media-controls {
+video::-webkit-media-controls,
+video::-webkit-media-controls-enclosure,
+video::-webkit-media-controls-panel,
+video::-webkit-media-controls-play-button,
+video::-webkit-media-controls-start-playback-button,
+video::-webkit-media-controls-overlay-play-button,
+video::-webkit-media-controls-overlay-enclosure,
+video::-webkit-media-controls-timeline,
+video::-webkit-media-controls-current-time-display,
+video::-webkit-media-controls-time-remaining-display,
+video::-webkit-media-controls-mute-button,
+video::-webkit-media-controls-toggle-closed-captions-button,
+video::-webkit-media-controls-volume-slider,
+video::-webkit-media-controls-fullscreen-button {
   display: none !important;
   opacity: 0 !important;
   pointer-events: none !important;
   -webkit-appearance: none !important;
   width: 0 !important;
   height: 0 !important;
+  max-width: 0 !important;
+  max-height: 0 !important;
+  visibility: hidden !important;
 }
-video::-webkit-media-controls-enclosure {
-  display: none !important;
-  opacity: 0 !important;
-}
-video::-webkit-media-controls-panel {
-  display: none !important;
-}
-video::-webkit-media-controls-play-button {
-  display: none !important;
-  opacity: 0 !important;
-  -webkit-appearance: none !important;
-}
-video::-webkit-media-controls-start-playback-button {
-  display: none !important;
-  opacity: 0 !important;
-  -webkit-appearance: none !important;
-  pointer-events: none !important;
-}
-video::-webkit-media-controls-overlay-play-button {
-  display: none !important;
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
+
 video {
   outline: none !important;
   background: #000 !important;
   object-fit: cover !important;
+  /* evita que el poster nativo se vea */
+  -webkit-appearance: none !important;
 }
 
 .camera-preview-video,
@@ -65,6 +62,14 @@ video {
   height: 100% !important;
   object-fit: cover !important;
   background: #000 !important;
+  -webkit-appearance: none !important;
+}
+
+/* Cualquier overlay de play que el WebView inyecte */
+.camera-preview-video::before,
+.camera-preview-video::after {
+  display: none !important;
+  content: none !important;
 }
 
 .wireframe-container {

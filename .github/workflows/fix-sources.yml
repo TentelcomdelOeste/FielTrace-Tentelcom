@@ -1,0 +1,42 @@
+name: Fix sources UI and gallery
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fix-sources.yml'
+      - 'scripts/patch_ui.py'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore baselines and patch
+        run: |
+          set -euo pipefail
+          git show ec296376:src/services/cameraService.ts > src/services/cameraService.ts
+          git show ec296376:src/services/storageService.ts > src/services/storageService.ts
+          git show 9fe89234:src/App.tsx > src/App.tsx 2>/dev/null || git show ec296376:src/App.tsx > src/App.tsx
+          grep -q 'Media.savePhoto' src/services/cameraService.ts
+          grep -q forcePlay src/App.tsx
+          python3 scripts/patch_ui.py
+          grep -q openFieldTraceAlbum src/services/cameraService.ts
+          grep -q viewingEvidence src/App.tsx
+          grep -q deleteEvidence src/services/storageService.ts
+          grep -q Media.savePhoto src/services/cameraService.ts
+          echo ALL_OK
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx src/services/cameraService.ts src/services/storageService.ts
+          git commit -m "Apply: lista compacta + Ver/Editar/Eliminar + galeria nativa + Media.savePhoto" || echo no_changes
+          git push

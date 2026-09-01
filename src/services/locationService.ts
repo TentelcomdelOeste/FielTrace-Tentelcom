@@ -45,6 +45,7 @@ export const locationService = {
 
   async checkAndRequestPermissions(): Promise<boolean> {
     if (Capacitor.isNativePlatform()) {
+      // Flujo nativo: Verificar y solicitar permisos de GPS en tiempo de ejecución
       try {
         const check = await Geolocation.checkPermissions();
         if (check.location !== 'granted') {

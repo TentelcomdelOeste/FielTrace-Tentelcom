@@ -339,7 +339,7 @@ export default function App() {
       }
 
       if (!rawImage) {
-        console.error('No se pudo capturar la imagen');
+        console.warn('No se pudo capturar la imagen o el usuario canceló la cámara nativa');
         setIsProcessing(false);
         return;
       }

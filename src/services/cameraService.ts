@@ -12,6 +12,7 @@ import { Capacitor } from '@capacitor/core';
 export const cameraService = {
   async takePhoto(): Promise<string | null> {
     if (Capacitor.isNativePlatform()) {
+      // Flujo nativo: Verificar y solicitar permisos de cámara en tiempo de ejecución
       try {
         const check = await Camera.checkPermissions();
         if (check.camera !== 'granted') {

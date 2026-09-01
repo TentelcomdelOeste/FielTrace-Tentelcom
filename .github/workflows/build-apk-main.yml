@@ -36,10 +36,35 @@ jobs:
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
       # npm ci stops when package.json and package-lock.json are out of sync.
-      # npm install resolves and refreshes the lockfile in the CI workspace so
-      # a dependency update cannot prevent the APK build from starting.
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      # The native camera screen must be opened only by the shutter button.
+      # The current React effect used to invoke captureBatchPhoto() immediately
+      # on entering the camera view and then navigate away in finally().
+      # Patch that legacy block in the CI workspace so the APK cannot regress.
+      - name: Disable automatic native capture on camera entry
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/App.tsx')
+          s = p.read_text()
+          old = '''      if (Capacitor.isNativePlatform() && selectedProject) {
+        captureBatchPhoto().finally(() => {
+          setCurrentStep('history');
+        });
+      }
+'''
+          new = '''      // Native capture is started only by the shutter button.
+      // GPS watch is intentionally started first so its permission dialog
+      // cannot compete with the native camera Activity.
+'''
+          if old not in s:
+              raise SystemExit('Expected legacy automatic-capture block was not found; refusing to build an unverified APK.')
+          p.write_text(s.replace(old, new, 1))
+          print('Applied camera-entry fix to src/App.tsx')
+          PY
 
       - name: Build web app
         run: npm run build

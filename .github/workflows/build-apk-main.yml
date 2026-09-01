@@ -46,6 +46,7 @@ jobs:
 
           app = Path('src/App.tsx').read_text()
           storage = Path('src/services/storageService.ts').read_text()
+          cam = Path('src/services/cameraService.ts').read_text()
 
           required_app = [
               'const rawImage = webcamRef.current.getScreenshot();',
@@ -56,15 +57,16 @@ jobs:
               'La fotografía NO se persiste en IndexedDB',
               'firebaseService.syncEvidenceToCloud(evidenceToSave)',
           ]
+          required_cam = [
+              "Field Trace",
+              'Media.savePhoto',
+          ]
 
-          missing = [x for x in required_app + required_storage if x not in app + storage]
+          missing = [x for x in required_app + required_storage + required_cam if x not in app + storage + cam]
           if missing:
               raise SystemExit('Camera/gallery implementation verification failed: ' + '; '.join(missing))
 
-          if 'localStorage.setItem' in app and 'photo' in app.lower():
-              print('Note: no photo persistence was detected through localStorage.')
-
-          print('Verified: camera capture -> overlay -> gallery, with evidence metadata stored separately.')
+          print('Verified: camera capture -> overlay -> gallery Field Trace album')
           PY
 
       - name: Build web app
@@ -81,6 +83,63 @@ jobs:
             echo "Complete Android platform already present; preserving it."
           fi
 
+      - name: Inject MainActivity (disable mediaPlaybackRequiresUserGesture)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Find package path from capacitor appId
+          DEST="android/app/src/main/java/com/fieldtrace/app/MainActivity.java"
+          mkdir -p "$(dirname "$DEST")"
+          if [ -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java ]; then
+            cp android/app/src/main/java/com/fieldtrace/app/MainActivity.java "$DEST"
+          fi
+          # Always write our fixed MainActivity (source of truth in repo)
+          if [ -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java ]; then
+            echo "MainActivity already in tree"
+          fi
+          # Also search any generated default and replace
+          cat > "$DEST" << 'JAVA'
+          package com.fieldtrace.app;
+
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              try {
+                WebView webView = this.bridge.getWebView();
+                if (webView != null) {
+                  WebSettings settings = webView.getSettings();
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setDomStorageEnabled(true);
+                  webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
+                }
+              } catch (Exception e) {}
+            }
+
+            @Override
+            public void onStart() {
+              super.onStart();
+              try {
+                WebView webView = this.bridge.getWebView();
+                if (webView != null) {
+                  webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+                }
+              } catch (Exception ignored) {}
+            }
+          }
+          JAVA
+          # Fix leading spaces from heredoc if any
+          sed -i 's/^          //' "$DEST" || true
+          echo "--- MainActivity ---"
+          head -20 "$DEST"
+          # Remove any OTHER MainActivity.java that would conflict (wrong package)
+          find android/app/src/main/java -name 'MainActivity.java' ! -path '*com/fieldtrace/app/*' -print -delete || true
+
       - name: Ensure Android runtime permissions
         shell: bash
         run: |
@@ -94,6 +153,8 @@ jobs:
               '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />',
               '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />',
               '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
+              '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+              '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
           ]
           marker = '</manifest>'
           missing = [x for x in required if x not in s]
@@ -107,13 +168,60 @@ jobs:
                   '    <uses-feature android:name="android.hardware.camera" android:required="false" />\n'
                   '    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />'
               )
-              s = s.replace('<!-- Permissions -->', feat)
+              if '<!-- Permissions -->' in s:
+                  s = s.replace('<!-- Permissions -->', feat)
+              else:
+                  s = s.replace('<uses-permission', feat + '\n    <uses-permission', 1)
           p.write_text(s)
           print('Verified Android camera/location/media permissions and hardware acceleration')
           PY
 
       - name: Sync Capacitor Android
         run: npx cap sync android
+
+      - name: Re-apply MainActivity after cap sync
+        shell: bash
+        run: |
+          DEST="android/app/src/main/java/com/fieldtrace/app/MainActivity.java"
+          mkdir -p "$(dirname "$DEST")"
+          cat > "$DEST" << 'JAVA'
+          package com.fieldtrace.app;
+
+          import android.os.Bundle;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              try {
+                WebView webView = this.bridge.getWebView();
+                if (webView != null) {
+                  WebSettings settings = webView.getSettings();
+                  settings.setMediaPlaybackRequiresUserGesture(false);
+                  settings.setDomStorageEnabled(true);
+                  webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
+                }
+              } catch (Exception e) {}
+            }
+
+            @Override
+            public void onStart() {
+              super.onStart();
+              try {
+                WebView webView = this.bridge.getWebView();
+                if (webView != null) {
+                  webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+                }
+              } catch (Exception ignored) {}
+            }
+          }
+          JAVA
+          sed -i 's/^          //' "$DEST" || true
+          grep -q setMediaPlaybackRequiresUserGesture "$DEST"
+          echo "MainActivity re-applied after cap sync"
 
       - name: Prepare Gradle
         working-directory: android

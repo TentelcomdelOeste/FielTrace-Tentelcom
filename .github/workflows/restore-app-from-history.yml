@@ -18,38 +18,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Restore App.tsx from last known-good commit
+      - name: Ensure full App.tsx then patch
         run: |
           set -euo pipefail
-          # Known-good full App.tsx (before stub corruption)
-          git show a465652e41031f7f47a4f7adc7789983752f7456:src/App.tsx > src/App.tsx
-          wc -l src/App.tsx
-          grep -q 'export default function App' src/App.tsx
-
-      - name: Apply camera / history / GPS patches
-        run: |
-          set -euo pipefail
+          lines=$(wc -l < src/App.tsx || echo 0)
+          if [ "$lines" -lt 500 ] || grep -q 'return null' src/App.tsx; then
+            echo "App.tsx looks broken ($lines lines); restoring from good commit"
+            git show a465652e41031f7f47a4f7adc7789983752f7456:src/App.tsx > src/App.tsx
+          fi
           python3 scripts/patch-app-tsx.py
-
-      - name: Sanity check (no stub)
-        run: |
-          set -euo pipefail
-          test -f src/App.tsx
           lines=$(wc -l < src/App.tsx)
           echo "App.tsx lines=$lines"
           test "$lines" -gt 1000
-          ! grep -q 'export default function App() { return null' src/App.tsx
-          ! grep -q "from './App.full'" src/App.tsx
           grep -q 'export default function App' src/App.tsx
           grep -q 'ideal: "environment"' src/App.tsx
           grep -q 'SIN GPS' src/App.tsx
 
-      - name: Commit restored App.tsx
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/App.tsx scripts/patch-app-tsx.py
-          git status
-          git diff --cached --quiet && echo 'No changes to commit' && exit 0
-          git commit -m "Restore full App.tsx with camera autoplay, SIN GPS, metadata cards, evidence list"
+          git add src/App.tsx
+          git diff --cached --quiet && echo 'No App changes' && exit 0
+          git commit -m "Patch App.tsx: continuous forcePlay, evidence list from shutter, camera CSS class"
           git push

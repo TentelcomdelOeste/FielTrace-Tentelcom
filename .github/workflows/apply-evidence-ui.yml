@@ -1,0 +1,45 @@
+name: Apply evidence UI improvements
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/apply-evidence-ui.yml'
+      - 'scripts/apply_evidence_ui.py'
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore App.tsx from last good commit if empty/broken
+        run: |
+          if [ ! -s src/App.tsx ] || ! grep -q "forcePlay" src/App.tsx; then
+            echo "Restoring App.tsx from ec296376"
+            git show ec296376:src/App.tsx > src/App.tsx
+          fi
+          wc -l src/App.tsx
+
+      - name: Apply UI patch script
+        run: |
+          python3 scripts/apply_evidence_ui.py
+          grep -n "viewingEvidence\|openFieldTraceAlbum\|deleteEvidence" src/App.tsx | head -20
+          grep -n "openFieldTraceAlbum" src/services/cameraService.ts | head -5
+          grep -n "deleteEvidence\|updateEvidence" src/services/storageService.ts | head -5
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx src/services/cameraService.ts src/services/storageService.ts
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Apply: lista compacta + Ver/Editar/Eliminar + galeria nativa"
+            git push
+          fi

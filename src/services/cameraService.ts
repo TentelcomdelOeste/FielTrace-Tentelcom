@@ -1,7 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * VERSIÓN MEJORADA - Guardado inteligente sin descargas
+ * Gallery save via @capacitor-community/media → album "Field Trace"
  */
 
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
@@ -10,6 +10,8 @@ import { Capacitor } from '@capacitor/core';
 
 /** Cached app-owned album identifier for the current process (Android). */
 let _cachedAlbumIdentifier: string | null = null;
+
+const ALBUM_NAME = 'Field Trace';
 
 export const cameraService = {
   async takePhoto() {
@@ -51,7 +53,7 @@ export const cameraService = {
           const fontSizeScale = metadata.settings?.fontSizeScale || 'medium';
           const fontSizeValue = metadata.settings?.fontSizeValue;
           const overlayColor = metadata.settings?.overlayColor || '#FFFFFF';
-          
+
           const baseSize = Math.max(24, Math.floor(canvas.width / 40));
           let fontSize = baseSize;
 
@@ -64,11 +66,11 @@ export const cameraService = {
 
           const margin = canvas.width * 0.04;
           const lineHeight = fontSize * 1.4;
-          
+
           ctx.font = `bold ${fontSize}px "JetBrains Mono", monospace`;
           ctx.textBaseline = 'top';
-          
-          const rawLines = [];
+
+          const rawLines: string[] = [];
           if (metadata.projectName) rawLines.push(`${metadata.projectName.toUpperCase()}`);
           if (metadata.settings?.showDateTime && metadata.dateTimeFormatted) rawLines.push(`${metadata.dateTimeFormatted}`);
           if (metadata.settings?.showGps) {
@@ -80,14 +82,14 @@ export const cameraService = {
           }
           if (metadata.settings?.showLocation && metadata.ubicacion) rawLines.push(`${metadata.ubicacion.toUpperCase()}`);
           if (metadata.settings?.showTech) rawLines.push(`${metadata.baseFields?.tecnico || 'N/A'}`);
-          
-          metadata.customFields.forEach((cf: any) => {
+
+          (metadata.customFields || []).forEach((cf: any) => {
             if (cf.active !== false && cf.showInPhoto) {
-               if (cf.value && cf.value.trim() !== '') {
-                 rawLines.push(`${cf.name.toUpperCase()}: ${cf.value.toUpperCase()}`);
-               } else {
-                 rawLines.push(`${cf.name.toUpperCase()}`);
-               }
+              if (cf.value && String(cf.value).trim() !== '') {
+                rawLines.push(`${cf.name.toUpperCase()}: ${String(cf.value).toUpperCase()}`);
+              } else {
+                rawLines.push(`${cf.name.toUpperCase()}`);
+              }
             }
           });
 
@@ -132,9 +134,7 @@ export const cameraService = {
                   currentLine = testLine;
                 }
               }
-              if (currentLine) {
-                lines.push(currentLine);
-              }
+              if (currentLine) lines.push(currentLine);
             }
           }
 
@@ -170,7 +170,7 @@ export const cameraService = {
           lines.forEach((line, index) => {
             ctx.fillText(line, startX, startY + (index * lineHeight));
           });
-          
+
           ctx.textAlign = 'left';
 
           if (metadata.settings?.logoImage) {
@@ -189,12 +189,12 @@ export const cameraService = {
                 let logoY = margin;
 
                 if (logoPosition === 'top-right') {
-                   logoX = canvas.width - targetWidth - margin;
+                  logoX = canvas.width - targetWidth - margin;
                 } else if (logoPosition === 'bottom-left') {
-                   logoY = canvas.height - targetHeight - margin;
+                  logoY = canvas.height - targetHeight - margin;
                 } else if (logoPosition === 'bottom-right') {
-                   logoX = canvas.width - targetWidth - margin;
-                   logoY = canvas.height - targetHeight - margin;
+                  logoX = canvas.width - targetWidth - margin;
+                  logoY = canvas.height - targetHeight - margin;
                 }
 
                 ctx.save();
@@ -205,22 +205,16 @@ export const cameraService = {
                 ctx.shadowOffsetY = 0;
                 ctx.drawImage(logoImg, logoX, logoY, targetWidth, targetHeight);
                 ctx.restore();
-                
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
-                resolve(dataUrl);
+
+                resolve(canvas.toDataURL('image/jpeg', 0.90));
               } catch (err) {
-                 const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
-                 resolve(dataUrl);
+                resolve(canvas.toDataURL('image/jpeg', 0.90));
               }
             };
-            logoImg.onerror = () => {
-              const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
-              resolve(dataUrl);
-            };
+            logoImg.onerror = () => resolve(canvas.toDataURL('image/jpeg', 0.90));
             logoImg.src = metadata.settings.logoImage;
           } else {
-            const dataUrl = canvas.toDataURL('image/jpeg', 0.90);
-            resolve(dataUrl);
+            resolve(canvas.toDataURL('image/jpeg', 0.90));
           }
         } catch (err) {
           console.error('Error drawing overlay:', err);
@@ -244,67 +238,84 @@ export const cameraService = {
       return false;
     }
 
+    const baseName = (fileName || 'FT_photo').replace(/\.[^/.]+$/, '');
+
+    // Attempt 1: save into Field Trace album
     try {
-      const options: any = { path: dataUrl };
-
-      if (platform === 'android') {
-        options.albumIdentifier = await this.ensureFieldTraceAlbum();
-        options.fileName = (fileName || 'FT_photo').replace(/\.[^/.]+$/, '');
-      }
-
-      const result = await Media.savePhoto(options);
-      console.log('[Gallery] Photo saved successfully:', result);
+      const albumIdentifier = await this.ensureFieldTraceAlbum();
+      const result = await Media.savePhoto({
+        path: dataUrl,
+        albumIdentifier,
+        fileName: baseName,
+      } as any);
+      console.log('[Gallery] Saved to Field Trace album:', result);
       return true;
     } catch (error: any) {
-      console.error('[Gallery] Failed to save photo (first attempt):', error?.code || error?.message || error);
-      if (platform === 'android') {
-        try {
-          _cachedAlbumIdentifier = null;
-          const options: any = {
-            path: dataUrl,
-            albumIdentifier: await this.ensureFieldTraceAlbum(),
-            fileName: (fileName || 'FT_photo').replace(/\.[^/.]+$/, ''),
-          };
-          const result = await Media.savePhoto(options);
-          console.log('[Gallery] Photo saved successfully on retry:', result);
-          return true;
-        } catch (retryError: any) {
-          console.error('[Gallery] Failed to save photo (retry):', retryError?.code || retryError?.message || retryError);
-        }
-      }
+      console.error('[Gallery] Album save failed:', error?.code || error?.message || error);
+    }
+
+    // Attempt 2: clear cache, recreate album, retry
+    try {
+      _cachedAlbumIdentifier = null;
+      const albumIdentifier = await this.ensureFieldTraceAlbum();
+      const result = await Media.savePhoto({
+        path: dataUrl,
+        albumIdentifier,
+        fileName: baseName,
+      } as any);
+      console.log('[Gallery] Saved to Field Trace on retry:', result);
+      return true;
+    } catch (error: any) {
+      console.error('[Gallery] Retry album save failed:', error?.code || error?.message || error);
+    }
+
+    // Attempt 3: save without album (still lands in device gallery)
+    try {
+      const result = await Media.savePhoto({
+        path: dataUrl,
+        fileName: baseName,
+      } as any);
+      console.warn('[Gallery] Saved WITHOUT album (fallback):', result);
+      return true;
+    } catch (error: any) {
+      console.error('[Gallery] Fallback save failed:', error?.code || error?.message || error);
       return false;
     }
   },
 
+  /**
+   * Ensure the "Field Trace" album exists and return its identifier.
+   * Match by name only (identifier path format varies by Android version).
+   */
   async ensureFieldTraceAlbum(): Promise<string> {
     if (_cachedAlbumIdentifier) {
       return _cachedAlbumIdentifier;
     }
 
-    const albumName = 'Field Trace';
-    const albumsPath = (await Media.getAlbumsPath()).path;
+    const findByName = (albums: { name: string; identifier: string }[]) =>
+      albums.find((a) => a.name === ALBUM_NAME || a.name === 'FieldTrace' || a.name === 'Field_Trace');
 
-    const findAlbum = (albums: { name: string; identifier: string }[]) =>
-      albums.find(
-        (a) => a.name === albumName && a.identifier.startsWith(albumsPath)
-      );
-
-    let album = findAlbum((await Media.getAlbums()).albums);
+    let albums = (await Media.getAlbums()).albums;
+    let album = findByName(albums);
 
     if (!album) {
       try {
-        await Media.createAlbum({ name: albumName });
+        await Media.createAlbum({ name: ALBUM_NAME });
+        console.log('[Gallery] createAlbum requested:', ALBUM_NAME);
       } catch (error: any) {
         console.warn('[Gallery] createAlbum:', error?.code || error?.message || error);
       }
 
-      await new Promise((r) => setTimeout(r, 150));
-      album = findAlbum((await Media.getAlbums()).albums);
+      await new Promise((r) => setTimeout(r, 250));
+      albums = (await Media.getAlbums()).albums;
+      album = findByName(albums);
     }
 
     if (!album) {
-      await new Promise((r) => setTimeout(r, 300));
-      album = findAlbum((await Media.getAlbums()).albums);
+      await new Promise((r) => setTimeout(r, 400));
+      albums = (await Media.getAlbums()).albums;
+      album = findByName(albums);
+      console.log('[Gallery] Albums after wait:', albums.map((a) => a.name));
     }
 
     if (!album) {
@@ -312,31 +323,7 @@ export const cameraService = {
     }
 
     _cachedAlbumIdentifier = album.identifier;
+    console.log('[Gallery] Using album:', album.name, album.identifier);
     return album.identifier;
-  },
-
-  async _saveToIndexedDB(dataUrl: string, fileName: string): Promise<boolean> {
-    return new Promise((resolve) => {
-      try {
-        const request = indexedDB.open('FieldTracePhotos', 1);
-        request.onerror = () => { resolve(false); };
-        request.onupgradeneeded = (event) => {
-          const db = (event.target as IDBOpenDBRequest).result;
-          if (!db.objectStoreNames.contains('photos')) {
-            db.createObjectStore('photos', { keyPath: 'fileName' });
-          }
-        };
-        request.onsuccess = () => {
-          const db = request.result;
-          const transaction = db.transaction('photos', 'readwrite');
-          const store = transaction.objectStore('photos');
-          const addRequest = store.add({ fileName, dataUrl, timestamp: new Date().toISOString(), size: dataUrl.length / 1024 });
-          addRequest.onsuccess = () => resolve(true);
-          addRequest.onerror = () => resolve(false);
-        };
-      } catch (error) {
-        resolve(false);
-      }
-    });
   },
 };

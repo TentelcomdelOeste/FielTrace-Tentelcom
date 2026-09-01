@@ -31,7 +31,8 @@ import {
   BarChart3,
   ArrowUpRight,
   Lock,
-  Unlock
+  Unlock,
+  Pencil
 } from 'lucide-react';
 import { AutoResizingTextarea } from './components/AutoResizingTextarea';
 import { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
@@ -201,7 +202,11 @@ export default function App() {
   const [showLastImage, setShowLastImage] = useState(false);
   const [showEvidenceList, setShowEvidenceList] = useState(false);
   const [showQuickConfig, setShowQuickConfig] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'field', id?: number, index?: number } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'field' | 'evidence', id?: number, index?: number } | null>(null);
+  const [viewingEvidence, setViewingEvidence] = useState<any | null>(null);
+  const [editingEvidence, setEditingEvidence] = useState<any | null>(null);
+  const [editConfirmOpen, setEditConfirmOpen] = useState(false);
+  const [pendingEditSave, setPendingEditSave] = useState<any | null>(null);
 
   const reversedEvidences = useMemo(() => [...evidences].reverse(), [evidences]);
 
@@ -661,38 +666,37 @@ export default function App() {
                    </button>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 pb-20">
+                <div className="space-y-2 pb-24">
                   {evidences.length === 0 ? (
-                    <div className="col-span-2 py-20 text-center space-y-4">
-                       <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto"><CameraIcon className="w-10 h-10 text-gray-200" /></div>
-                       <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest leading-relaxed">No hay registros<br/>técnicos capturados</p>
+                    <div className="py-16 text-center space-y-3">
+                       <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto"><CameraIcon className="w-8 h-8 text-gray-200" /></div>
+                       <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest leading-relaxed">No hay registros<br/>tecnicos capturados</p>
                     </div>
                   ) : (
-                    reversedEvidences.map((ev) => (
-                      <motion.div 
-                        layoutId={`ev-${ev.id}`}
-                        key={ev.id} 
-                        onClick={() => {
-                          // Allow viewing old photo in modal
-                          storageService.getPhotoBlob(ev.photoPath).then(url => {
-                            if (url) {
-                              setLastImage(url);
-                              setShowLastImage(true);
-                            }
-                          });
-                        }}
-                        className="aspect-[4/5] rounded-[2rem] overflow-hidden border border-gray-100 relative group shadow-sm bg-white cursor-pointer"
-                      >
-                        <EvidenceCard evidence={ev} />
-                        <div className="absolute top-3 left-3 flex gap-1">
-                           <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
+                    reversedEvidences.map((ev) => {
+                      const tech = ev.baseFields?.tecnico || '-';
+                      const gpsShort = ev.gpsLabel || (ev.latitude ? `${Number(ev.latitude).toFixed(5)}, ${Number(ev.longitude).toFixed(5)}` : 'SIN GPS');
+                      const mainField = (ev.customFields || []).find((f: any) => f.active !== false && f.showInPhoto && (f.value || f.name));
+                      const fieldText = mainField ? (mainField.value ? `${mainField.name}: ${mainField.value}` : mainField.name) : '';
+                      return (
+                      <div key={ev.id || ev.uuid} className="bg-white border border-gray-100 rounded-2xl px-3.5 py-3 shadow-sm flex items-center gap-3">
+                        <div className="w-2 h-2 rounded-full bg-green-500 shrink-0 shadow-[0_0_6px_#22c55e]"></div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="text-[12px] font-black text-gray-950 tracking-tight">{ev.fecha} {ev.hora || ''}</p>
+                            <span className="text-[10px] font-bold text-gray-500 uppercase truncate">{tech}</span>
+                          </div>
+                          <p className="text-[10px] font-mono text-green-700 truncate mt-0.5">{gpsShort}</p>
+                          {fieldText && <p className="text-[9px] text-gray-400 uppercase truncate">{fieldText}</p>}
                         </div>
-                        <div className="absolute bottom-4 left-4 right-4 bg-black/60 backdrop-blur-xl px-3 py-2 rounded-xl">
-                           <p className="text-[8px] text-white font-black uppercase truncate tracking-tighter">{ev.baseFields.posteId}</p>
-                           <p className="text-[6px] text-white/60 font-mono italic">{ev.fecha}</p>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button type="button" onClick={() => setViewingEvidence(ev)} className="w-9 h-9 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 active:scale-95" title="Ver"><Eye className="w-4 h-4" /></button>
+                          <button type="button" onClick={() => setEditingEvidence({ ...ev, customFields: (ev.customFields || []).map((f: any) => ({ ...f })) })} className="w-9 h-9 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600 active:scale-95" title="Editar"><Pencil className="w-4 h-4" /></button>
+                          <button type="button" onClick={() => setConfirmDelete({ type: 'evidence', id: ev.id })} className="w-9 h-9 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-red-500 active:scale-95" title="Eliminar"><Trash2 className="w-4 h-4" /></button>
                         </div>
-                      </motion.div>
-                    ))
+                      </div>
+                      );
+                    })
                   )}
                 </div>
               </motion.div>
@@ -851,7 +855,7 @@ export default function App() {
                   </button>
 
                   <button 
-                    onClick={() => setShowEvidenceList(true)} 
+                    onClick={() => { void cameraService.openFieldTraceAlbum(); }} 
                     className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white"
                   >
                     {lastImage ? (
@@ -1573,6 +1577,8 @@ export default function App() {
               <p className="text-sm text-gray-500 font-medium mb-8">
                 {confirmDelete.type === 'field' 
                   ? '¿Estás seguro de que deseas eliminar este campo personalizado? Esta acción no se puede deshacer.'
+                  : confirmDelete.type === 'evidence'
+                  ? '¿Eliminar este registro? Esta acción no se puede deshacer. La foto en el álbum Field Trace no se eliminará automáticamente.'
                   : '¿Estás seguro de que deseas eliminar este proyecto y toda su historia?'}
               </p>
               <div className="flex gap-4">
@@ -1594,6 +1600,16 @@ export default function App() {
                         newFields.splice(confirmDelete.index, 1);
                         setSelectedProject({...selectedProject, customFields: newFields});
                       }
+                    } else if (confirmDelete.type === 'evidence' && confirmDelete.id != null) {
+                      try {
+                        await storageService.deleteEvidence(confirmDelete.id);
+                        if (selectedProject?.id) {
+                          const evs = await storageService.getEvidencesByProject(selectedProject.id);
+                          setEvidences(evs);
+                        }
+                      } catch (e) {
+                        console.error('Error eliminando evidencia', e);
+                      }
                     }
                     setConfirmDelete(null);
                   }}
@@ -1605,6 +1621,67 @@ export default function App() {
             </motion.div>
           </motion.div>
         )}
+
+        {viewingEvidence && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[190] bg-black/70 backdrop-blur-sm flex flex-col">
+            <div className="flex items-center justify-between px-4 py-4 bg-white border-b">
+              <h2 className="text-sm font-black uppercase tracking-tight">Detalle del registro</h2>
+              <button type="button" onClick={() => setViewingEvidence(null)} className="text-xs font-bold uppercase text-gray-500 px-3 py-2">Cerrar</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 bg-gray-50 space-y-3">
+              <div className="bg-white rounded-2xl border border-gray-100 p-4 space-y-2.5 shadow-sm">
+                <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Proyecto</p>
+                <p className="text-sm font-black text-gray-950 uppercase">{viewingEvidence.projectName || '-'}</p>
+                <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest pt-2">Fecha / Hora</p>
+                <p className="text-sm font-mono text-gray-800">{viewingEvidence.fecha} {viewingEvidence.hora || ''}</p>
+                <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest pt-2">GPS</p>
+                <p className="text-sm font-mono text-green-700">{viewingEvidence.gpsLabel || (viewingEvidence.latitude ? `${viewingEvidence.latitude}, ${viewingEvidence.longitude}` : 'SIN GPS')}</p>
+                {viewingEvidence.ubicacion && (<><p className="text-[10px] font-black uppercase text-gray-400 tracking-widest pt-2">Ubicacion</p><p className="text-sm text-gray-700 uppercase">{viewingEvidence.ubicacion}</p></>)}
+                <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest pt-2">Tecnico</p>
+                <p className="text-sm font-bold text-gray-900 uppercase">{viewingEvidence.baseFields?.tecnico || '-'}</p>
+                {(viewingEvidence.customFields || []).filter((f: any) => f.active !== false).map((f: any, i: number) => (
+                  <div key={i}><p className="text-[10px] font-black uppercase text-gray-400 tracking-widest pt-2">{f.name || 'Campo'}</p><p className="text-sm text-gray-800 uppercase">{f.value || '-'}</p></div>
+                ))}
+                <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest pt-2">Referencia foto</p>
+                <p className="text-[11px] font-mono text-gray-400 break-all">{viewingEvidence.photoPath || viewingEvidence.uuid || '-'}</p>
+              </div>
+              <p className="text-center text-[10px] text-gray-400 pt-2">La foto real esta en Galeria</p>
+            </div>
+          </motion.div>
+        )}
+        {editingEvidence && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[190] bg-black/70 backdrop-blur-sm flex flex-col">
+            <div className="flex items-center justify-between px-4 py-4 bg-white border-b">
+              <h2 className="text-sm font-black uppercase tracking-tight">Editar registro</h2>
+              <button type="button" onClick={() => setEditingEvidence(null)} className="text-xs font-bold uppercase text-gray-500 px-3 py-2">Cancelar</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 bg-gray-50 space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3"><p className="text-[11px] text-amber-800 font-medium">Si editas esta informacion, no coincidira con el texto impreso en la fotografia.</p></div>
+              <div className="space-y-1.5"><label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Tecnico</label>
+                <input type="text" value={editingEvidence.baseFields?.tecnico || ''} onChange={(e) => setEditingEvidence({ ...editingEvidence, baseFields: { ...(editingEvidence.baseFields || {}), tecnico: e.target.value.toUpperCase() } })} className="w-full p-3.5 bg-white border border-gray-100 rounded-2xl text-sm font-bold outline-none" />
+              </div>
+              {(editingEvidence.customFields || []).map((f: any, idx: number) => (
+                <div key={idx} className="space-y-1.5"><label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{f.name || `Campo ${idx + 1}`}</label>
+                  <input type="text" value={f.value || ''} onChange={(e) => { const fields = [...(editingEvidence.customFields || [])]; fields[idx] = { ...fields[idx], value: e.target.value }; setEditingEvidence({ ...editingEvidence, customFields: fields }); }} className="w-full p-3.5 bg-white border border-gray-100 rounded-2xl text-sm font-bold outline-none" />
+                </div>
+              ))}
+              <button type="button" onClick={() => { setPendingEditSave(editingEvidence); setEditConfirmOpen(true); }} className="w-full py-4 bg-blue-600 text-white rounded-2xl text-sm font-black uppercase">Guardar cambios</button>
+            </div>
+          </motion.div>
+        )}
+        {editConfirmOpen && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[210] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} className="bg-white p-8 rounded-[2.5rem] w-full max-w-sm shadow-2xl text-center">
+              <h3 className="text-lg font-black uppercase mb-3">Confirmar edicion</h3>
+              <p className="text-sm text-gray-500 mb-8">Si editas esta informacion, no coincidira con el texto impreso en la fotografia. ¿Continuar?</p>
+              <div className="flex gap-4">
+                <button onClick={() => { setEditConfirmOpen(false); setPendingEditSave(null); }} className="flex-1 py-4 bg-gray-100 text-gray-600 rounded-2xl text-sm font-bold uppercase">Cancelar</button>
+                <button onClick={async () => { if (pendingEditSave?.id != null) { try { await storageService.updateEvidence(pendingEditSave.id, { baseFields: pendingEditSave.baseFields, customFields: pendingEditSave.customFields }); if (selectedProject?.id) { const evs = await storageService.getEvidencesByProject(selectedProject.id); setEvidences(evs); } } catch (e) { console.error(e); } } setEditConfirmOpen(false); setPendingEditSave(null); setEditingEvidence(null); }} className="flex-1 py-4 bg-blue-600 text-white rounded-2xl text-sm font-bold uppercase">Continuar</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
       </AnimatePresence>
     </div>
   );

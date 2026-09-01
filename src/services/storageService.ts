@@ -283,16 +283,11 @@ export const storageService = {
     });
   },
 
+
   async updateEvidence(id: number, updates: Partial<Evidence>): Promise<void> {
     const existing = await manager.get<Evidence>(STORE_EVIDENCES, id);
     if (!existing) throw new Error('Evidence not found');
-    const updated: Evidence = {
-      ...existing,
-      ...updates,
-      id,
-      updatedAt: new Date(),
-      syncStatus: 'pending'
-    };
+    const updated: Evidence = { ...existing, ...updates, id, updatedAt: new Date(), syncStatus: 'pending' };
     await manager.put(STORE_EVIDENCES, updated);
     if (navigator.onLine) {
       firebaseService.syncEvidenceToCloud(updated).then(async (success) => {

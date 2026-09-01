@@ -39,7 +39,7 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Disable automatic native capture on camera entry
-        run: python3 -c 'from pathlib import Path; p=Path("src/App.tsx"); s=p.read_text(); old="      if (Capacitor.isNativePlatform() && selectedProject)\n        captureBatchPhoto().finally(() => {\n          setCurrentStep(\"history\");\n        });\n      }\n"; new="      // Native capture starts only from the shutter button.\n"; assert old in s, "legacy automatic capture block not found"; p.write_text(s.replace(old,new,1))'
+        run: python3 -c 'import re; from pathlib import Path; p=Path("src/App.tsx"); s=p.read_text(); pattern=r"\n\s*if \(Capacitor\.isNativePlatform\(\) && selectedProject\) \{\n\s*captureBatchPhoto\(\)\.finally\(\(\) => \{\n\s*setCurrentStep\(\x27history\x27\);\n\s*\}\);\n\s*\}"; new,count=re.subn(pattern,"\\n",s,count=1); assert count==1, "legacy automatic capture block not found"; p.write_text(new)'
 
       - name: Build web app
         run: npm run build

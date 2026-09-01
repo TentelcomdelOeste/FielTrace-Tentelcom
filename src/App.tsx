@@ -172,26 +172,13 @@ export default function App() {
 
   useEffect(() => {
     loadData();
-  }, []);
-
-  useEffect(() => {
-    let watchId: string | null = null;
-    if (currentStep === 'camera') {
-      locationService.watchPosition().then(id => {
-        watchId = id;
-      });
-      if (Capacitor.isNativePlatform() && selectedProject) {
-        captureBatchPhoto().finally(() => {
-          setCurrentStep('history');
-        });
-      }
-    }
+    const watchPromise = locationService.watchPosition();
     return () => {
-      if (watchId) {
-        locationService.clearWatch(watchId);
-      }
+      watchPromise.then(id => {
+        if (id) locationService.clearWatch(id);
+      });
     };
-  }, [currentStep, selectedProject]);
+  }, []);
 
   const loadData = async () => {
     const allProjects = await storageService.getAllProjects();
@@ -339,7 +326,7 @@ export default function App() {
       }
 
       if (!rawImage) {
-        console.warn('No se pudo capturar la imagen o el usuario canceló la cámara nativa');
+        console.error('No se pudo capturar la imagen');
         setIsProcessing(false);
         return;
       }
@@ -434,8 +421,8 @@ export default function App() {
             return;
           }
 
-          // 3. Guardar Evidence en IndexedDB solo tras confirmar éxito de fotografía (en Android no se duplica la foto en IndexedDB)
-          await storageService.addEvidence(evidenceObject, Capacitor.getPlatform() === 'web' ? finalImage : undefined);
+          // 3. Guardar Evidence en IndexedDB solo tras confirmar éxito de fotografía
+          await storageService.addEvidence(evidenceObject, finalImage);
 
           // 4. Actualizar estado de UI
           const evs = await storageService.getEvidencesByProject(selectedProject.id!);

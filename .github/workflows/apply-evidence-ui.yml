@@ -5,7 +5,6 @@ on:
   push:
     paths:
       - '.github/workflows/apply-evidence-ui.yml'
-      - 'scripts/apply_evidence_ui.py'
 
 jobs:
   apply:
@@ -17,28 +16,63 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Restore App.tsx from last good commit if empty/broken
+      - name: Ensure App.tsx is the camera-working baseline
         run: |
-          if [ ! -s src/App.tsx ] || ! grep -q "forcePlay" src/App.tsx; then
-            echo "Restoring App.tsx from ec296376"
+          if [ ! -s src/App.tsx ] || ! grep -q forcePlay src/App.tsx; then
+            echo "Restoring App.tsx from 9fe89234"
+            git show 9fe89234:src/App.tsx > src/App.tsx
+          fi
+          # Prefer commit that definitely has full App
+          if ! grep -q forcePlay src/App.tsx; then
             git show ec296376:src/App.tsx > src/App.tsx
           fi
           wc -l src/App.tsx
+          grep -q forcePlay src/App.tsx
+
+      - name: Patch regex in apply script (include closing paren)
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/apply_evidence_ui.py')
+          t = p.read_text()
+          # Fix the broken regex that missed )} before CAMERA VIEW
+          old = r"r'<div className=\"grid grid-cols-2 gap-4 pb-20\">[\s\S]*?</div>\s*</motion\\.div>\s*\\{\\/\\* CAMERA VIEW'"
+          # Simpler: replace the pattern assignment line
+          import re
+          t2 = re.sub(
+              r"pattern = r'<div className=\"grid grid-cols-2 gap-4 pb-20\">.*CAMERA VIEW'",
+              r"pattern = r'<div className=\"grid grid-cols-2 gap-4 pb-20\">[\\s\\S]*?</div>\\s*</motion\\.div>\\s*\\)\\}'",
+              t,
+          )
+          if t2 == t:
+              # try another form present in file
+              t2 = t.replace(
+                  r"pattern = r'<div className=\"grid grid-cols-2 gap-4 pb-20\">[\s\S]*?</div>\s*</motion\.div>\s*\{\/\* CAMERA VIEW'",
+                  r"pattern = r'<div className=\"grid grid-cols-2 gap-4 pb-20\">[\s\S]*?</div>\s*</motion\.div>\s*\)\}'",
+              )
+          p.write_text(t2)
+          print('script regex fixed' if t2 != t else 'WARNING: pattern not rewritten')
+          PY
 
       - name: Apply UI patch script
         run: |
           python3 scripts/apply_evidence_ui.py
-          grep -n "viewingEvidence\|openFieldTraceAlbum\|deleteEvidence" src/App.tsx | head -20
-          grep -n "openFieldTraceAlbum" src/services/cameraService.ts | head -5
-          grep -n "deleteEvidence\|updateEvidence" src/services/storageService.ts | head -5
+          echo "--- checks ---"
+          grep -n "viewingEvidence\|openFieldTraceAlbum\|setViewingEvidence\|deleteEvidence" src/App.tsx | head -20 || true
+          grep -n "openFieldTraceAlbum" src/services/cameraService.ts | head -5 || true
+          grep -n "deleteEvidence\|updateEvidence" src/services/storageService.ts | head -5 || true
+          test -s src/App.tsx
+          grep -q forcePlay src/App.tsx
+          grep -q viewingEvidence src/App.tsx
+          grep -q openFieldTraceAlbum src/App.tsx
 
       - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/App.tsx src/services/cameraService.ts src/services/storageService.ts
+          git add src/App.tsx src/services/cameraService.ts src/services/storageService.ts scripts/apply_evidence_ui.py
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "No changes"
           else
             git commit -m "Apply: lista compacta + Ver/Editar/Eliminar + galeria nativa"
             git push

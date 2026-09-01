@@ -71,15 +71,24 @@ export enum SyncOperation {
 
 export interface Evidence {
   id?: number;
-  uuid?: string;
+  uuid: string;
   projectId: number;
-  photoPath: string; // Referencia o nombre de archivo en la galería/almacenamiento del dispositivo
+  projectName?: string;
+  photoPath: string; // Referencia robusta: FT_<uuid>.jpg
+  photo?: {
+    fileName: string;
+    uri?: string;
+    mimeType?: string;
+    createdAt: Date;
+  };
+  capturedAt: Date;
   fecha: string;
   hora: string;
-  timestamp?: number;
+  timestamp: number;
   latitude: number;
   longitude: number;
   gpsAccuracy?: number;
+  gpsCapturedAt?: Date;
   ubicacion: string;
   baseFields: BaseFields;
   customFields: CustomField[];
@@ -87,13 +96,12 @@ export interface Evidence {
   createdAt: Date;
   updatedAt?: Date;
   locked: boolean;
-  // Sync state prepared for future phases (Phase 2/3)
-  syncStatus?: 'pending' | 'synced' | 'failed';
+  syncStatus: 'pending' | 'synced' | 'failed';
   syncCreatedAt?: Date;
   syncUpdatedAt?: Date;
   lastSyncedAt?: Date;
   syncError?: string;
-  retryCount?: number;
+  retryCount: number;
 }
 
 export interface Template {

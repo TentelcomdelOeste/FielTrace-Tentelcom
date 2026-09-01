@@ -180,24 +180,16 @@ export const storageService = {
   },
 
   /**
-   * Guarda la evidencia en IndexedDB (solo metadatos y referencia a la foto de la galería).
+   * Guarda la evidencia en IndexedDB (solo metadatos y referencia robusta a la foto de la galería).
    * En plataformas móviles (Android/iOS), la foto está en la galería nativa.
    * En Web, se guarda un respaldo temporal en STORE_PHOTOS para la vista previa de la app.
    */
   async addEvidence(evidence: Evidence, imageBase64: string): Promise<number> {
-    const timestamp = Date.now();
-    const fileName = `FT_${timestamp}.jpg`;
-    const uuid = crypto.randomUUID ? crypto.randomUUID() : 'ev_' + timestamp + Math.random().toString(36).substr(2, 9);
-
     const evidenceToSave: Evidence = {
       ...evidence,
-      uuid,
-      photoPath: fileName, // Referencia robusta a la foto
-      timestamp,
-      createdAt: new Date(),
       updatedAt: new Date(),
       syncStatus: 'pending',
-      retryCount: 0
+      retryCount: evidence.retryCount ?? 0
     };
 
     const evidenceId = await manager.add(STORE_EVIDENCES, evidenceToSave);
@@ -207,7 +199,7 @@ export const storageService = {
       try {
         const response = await fetch(imageBase64);
         const blob = await response.blob();
-        await manager.put(STORE_PHOTOS, { id: fileName, blob });
+        await manager.put(STORE_PHOTOS, { id: evidenceToSave.photoPath, blob });
       } catch (e) {
         console.error('[StorageService] Error guardando respaldo web de la foto:', e);
       }

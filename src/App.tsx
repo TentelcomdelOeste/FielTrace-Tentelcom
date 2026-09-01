@@ -330,10 +330,50 @@ export default function App() {
 
       const { gps, locationData } = locationService.getCurrentState();
       const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
+      const ubicacionText = currentFormattedLocation && currentFormattedLocation !== "Buscando..." 
+        ? currentFormattedLocation 
+        : "Pendiente de geocodificación";
 
-      const now = new Date();
-      const metadata = {
+      const uuid = crypto.randomUUID ? crypto.randomUUID() : 'ev_' + Date.now() + Math.random().toString(36).substr(2, 9);
+      const fileName = `FT_${uuid}.jpg`;
+      const capturedAt = new Date();
+      const timestamp = capturedAt.getTime();
+      const fecha = capturedAt.toLocaleDateString('es-ES');
+      const hora = capturedAt.toLocaleTimeString('es-ES', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+      const customFieldsSnapshot = selectedProject.customFields.map(f => ({ ...f }));
+
+      // Objeto ÚNICO de metadatos/evidencia unificado (del cual se derivan overlay y IndexedDB)
+      const evidenceObject: any = {
+        uuid,
+        projectId: selectedProject.id!,
         projectName: selectedProject.name,
+        photoPath: fileName,
+        photo: {
+          fileName,
+          createdAt: capturedAt
+        },
+        capturedAt,
+        fecha,
+        hora,
+        timestamp,
+        latitude: gps?.lat || 0,
+        longitude: gps?.lon || 0,
+        gpsAccuracy: gps?.accuracy,
+        gpsCapturedAt: capturedAt,
+        ubicacion: ubicacionText,
+        baseFields: { 
+          tecnico: selectedProject.techName || "TECNICO" 
+        },
+        customFields: customFieldsSnapshot,
+        sharedWhatsApp: false,
+        createdAt: capturedAt,
+        locked: true,
+        syncStatus: 'pending',
+        retryCount: 0,
+        // Propiedades auxiliares para el overlay
+        projectNameOverlay: selectedProject.name,
+        dateTimeFormatted: formatDateTime(selectedProject.dateTimeFormat),
         settings: {
           showDateTime: selectedProject.showDateTime,
           dateTimeFormat: selectedProject.dateTimeFormat,
@@ -348,60 +388,39 @@ export default function App() {
           logoPosition: selectedProject.logoPosition,
           logoSize: selectedProject.logoSize,
           logoOpacity: selectedProject.logoOpacity
-        },
-        dateTimeFormatted: formatDateTime(selectedProject.dateTimeFormat),
-        fecha: now.toLocaleDateString(),
-        hora: now.toLocaleTimeString(),
-        latitude: gps?.lat || 0,
-        longitude: gps?.lon || 0,
-        ubicacion: currentFormattedLocation,
-        baseFields: { 
-          tecnico: selectedProject.techName || "TECNICO" 
-        },
-        customFields: selectedProject.customFields.filter(f => f.active !== false && f.showInPhoto && (f.name.trim() !== '' || f.value.trim() !== ''))
+        }
       };
 
-      // Procesamiento asíncrono para no bloquear el botón de foto
+      // Procesamiento asíncrono atómico
       (async () => {
         try {
-          const finalImage = await cameraService.drawOverlay(rawImage, metadata);
+          // 1. Generar overlay utilizando el objeto unificado
+          const finalImage = await cameraService.drawOverlay(rawImage, evidenceObject);
           if (!finalImage) {
              throw new Error("Error procesando overlay");
           }
           setLastImage(finalImage);
           
-          // Deep copy of custom fields to preserve state at capture time
-          const customFieldsSnapshot = selectedProject.customFields.map(f => ({ ...f }));
+          // 2. Guardar fotografía en galería PRIMERO (Guardado atómico)
+          const savedToGallerySuccess = await cameraService.saveToGallery(finalImage, fileName);
+          if (!savedToGallerySuccess) {
+            console.error("[AtomicCapture] Error: No se pudo guardar la fotografía en la galería. Abortando registro de evidencia.");
+            return;
+          }
 
-          await storageService.addEvidence({
-            projectId: selectedProject.id!,
-            photoPath: '', // Will be set by service
-            fecha: metadata.fecha,
-            hora: metadata.hora,
-            latitude: metadata.latitude,
-            longitude: metadata.longitude,
-            ubicacion: metadata.ubicacion,
-            baseFields: metadata.baseFields,
-            customFields: customFieldsSnapshot,
-            sharedWhatsApp: false,
-            createdAt: now,
-            locked: true
-          }, finalImage);
+          // 3. Guardar Evidence en IndexedDB solo tras confirmar éxito de fotografía
+          await storageService.addEvidence(evidenceObject, finalImage);
 
-          const fileName = `FT_${now.getTime()}.jpg`;
-          cameraService.saveToGallery(finalImage, fileName).catch(console.error);
-
-          // Update UI state quietly
+          // 4. Actualizar estado de UI
           const evs = await storageService.getEvidencesByProject(selectedProject.id!);
           setEvidences(evs);
         } catch (e: any) {
-          console.error("Fallo procesamiento asíncrono", e);
+          console.error("Fallo procesamiento asíncrono en captura", e);
         }
       })();
 
     } catch (e: any) {
       console.error('Batch capture error', e);
-      // In case synchronous part failed before resetting flag
       setIsProcessing(false);
     }
   };

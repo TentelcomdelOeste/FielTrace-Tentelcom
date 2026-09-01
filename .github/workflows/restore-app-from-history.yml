@@ -1,9 +1,10 @@
-name: Restore App.tsx from history
+name: Restore App.tsx permanently
 
 on:
   workflow_dispatch:
   push:
     paths:
+      - 'scripts/patch-app-tsx.py'
       - '.github/workflows/restore-app-from-history.yml'
 
 permissions:
@@ -17,23 +18,38 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Restore App.tsx from good commit
+      - name: Restore App.tsx from last known-good commit
         run: |
           set -euo pipefail
+          # Known-good full App.tsx (before stub corruption)
           git show a465652e41031f7f47a4f7adc7789983752f7456:src/App.tsx > src/App.tsx
           wc -l src/App.tsx
           grep -q 'export default function App' src/App.tsx
-          # Minimal safe patches
-          sed -i 's/facingMode: { exact: "environment" }/facingMode: { ideal: "environment" }/g' src/App.tsx
-          sed -i "s/SINCAL\.\.\./SIN GPS/g" src/App.tsx
-          sed -i 's/width: { ideal: 4096 }/width: { ideal: 1920 }/g' src/App.tsx
-          sed -i 's/height: { ideal: 2160 }/height: { ideal: 1080 }/g' src/App.tsx
 
-      - name: Commit
+      - name: Apply camera / history / GPS patches
+        run: |
+          set -euo pipefail
+          python3 scripts/patch-app-tsx.py
+
+      - name: Sanity check (no stub)
+        run: |
+          set -euo pipefail
+          test -f src/App.tsx
+          lines=$(wc -l < src/App.tsx)
+          echo "App.tsx lines=$lines"
+          test "$lines" -gt 1000
+          ! grep -q 'export default function App() { return null' src/App.tsx
+          ! grep -q "from './App.full'" src/App.tsx
+          grep -q 'export default function App' src/App.tsx
+          grep -q 'ideal: "environment"' src/App.tsx
+          grep -q 'SIN GPS' src/App.tsx
+
+      - name: Commit restored App.tsx
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/App.tsx
-          git diff --cached --quiet && echo 'No changes' && exit 0
-          git commit -m "Restore App.tsx from good commit (autoplay facingMode + SIN GPS)"
+          git add src/App.tsx scripts/patch-app-tsx.py
+          git status
+          git diff --cached --quiet && echo 'No changes to commit' && exit 0
+          git commit -m "Restore full App.tsx with camera autoplay, SIN GPS, metadata cards, evidence list"
           git push

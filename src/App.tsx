@@ -97,6 +97,48 @@ const LiveLocationOverlay = memo(({ selectedProject }: { selectedProject: any })
 
 // Inside App.tsx
 // I will replace the state variables later.
+
+/** Metadata-only card - photos live only in native gallery Field Trace */
+const EvidenceCard = memo(({ evidence }: { evidence: any }) => {
+  const hasGps = evidence.latitude && evidence.longitude && !(evidence.latitude === 0 && evidence.longitude === 0);
+  const gpsText = evidence.gpsLabel || (hasGps
+    ? `${Number(evidence.latitude).toFixed(5)}, ${Number(evidence.longitude).toFixed(5)}`
+    : 'SIN GPS');
+  const tech = evidence.baseFields?.tecnico || '-';
+  const fields = (evidence.customFields || [])
+    .filter((f: any) => f.active !== false && f.showInPhoto)
+    .slice(0, 3);
+
+  return (
+    <div className="aspect-[4/5] rounded-[2rem] overflow-hidden border border-gray-100 relative group shadow-sm bg-white flex flex-col p-4">
+      <div className="absolute top-3 left-3 flex gap-1">
+        <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
+      </div>
+      <div className="mt-4 space-y-1.5 flex-1 min-h-0 overflow-hidden">
+        <p className="text-[10px] font-black uppercase text-gray-950 tracking-tight line-clamp-2">
+          {evidence.projectName || 'Evidencia'}
+        </p>
+        <p className="text-[9px] font-mono text-gray-500">{evidence.fecha} {evidence.hora || ''}</p>
+        <p className={`text-[9px] font-mono ${hasGps ? 'text-green-600' : 'text-amber-600'}`}>{gpsText}</p>
+        {evidence.ubicacion && evidence.ubicacion !== 'Pendiente de geocodificación' && evidence.ubicacion !== '' && (
+          <p className="text-[8px] text-gray-400 line-clamp-2 uppercase">{evidence.ubicacion}</p>
+        )}
+        <p className="text-[9px] font-bold text-gray-700 uppercase">{tech}</p>
+        {fields.map((f: any, i: number) => (
+          <p key={i} className="text-[8px] text-gray-500 uppercase truncate">
+            {f.value ? `${f.name}: ${f.value}` : f.name}
+          </p>
+        ))}
+      </div>
+      <div className="mt-auto pt-2 border-t border-gray-50">
+        <p className="text-[7px] text-gray-300 font-mono truncate" title={evidence.photoPath}>
+          ref: {evidence.photoPath || evidence.uuid || '-'}
+        </p>
+      </div>
+    </div>
+  );
+});
+
 const EvidenceImage = memo(({ photoId, className }: { photoId: string, className?: string }) => {
   const [url, setUrl] = useState<string | null>(null);
   const imgRef = useRef<HTMLDivElement>(null);
@@ -157,6 +199,7 @@ export default function App() {
   const [unlockedSettings, setUnlockedSettings] = useState<Record<string, boolean>>({});
   const [lastImage, setLastImage] = useState<string | null>(null);
   const [showLastImage, setShowLastImage] = useState(false);
+  const [showEvidenceList, setShowEvidenceList] = useState(false);
   const [showQuickConfig, setShowQuickConfig] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'field', id?: number, index?: number } | null>(null);
 
@@ -168,6 +211,32 @@ export default function App() {
   const [filterField, setFilterField] = useState<string>("");
 
   const webcamRef = useRef<Webcam>(null);
+
+  // Force play when entering camera (Android WebView)
+  useEffect(() => {
+    if (currentStep !== 'camera') return;
+    const forcePlay = () => {
+      const video = webcamRef.current?.video;
+      if (!video) return;
+      video.muted = true;
+      video.playsInline = true;
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+      video.removeAttribute('controls');
+      void video.play().catch(() => {});
+    };
+    forcePlay();
+    const t1 = setTimeout(forcePlay, 80);
+    const t2 = setTimeout(forcePlay, 300);
+    const t3 = setTimeout(forcePlay, 800);
+    const onPointer = () => forcePlay();
+    window.addEventListener('pointerdown', onPointer, { once: true });
+    return () => {
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+      window.removeEventListener('pointerdown', onPointer);
+    };
+  }, [currentStep]);
+
 
   useEffect(() => {
     loadData();
@@ -335,10 +404,12 @@ export default function App() {
       setIsProcessing(false);
 
       const { gps, locationData } = locationService.getCurrentState();
+      const hasGps = !!(gps && gps.lat != null && gps.lon != null);
+      const gpsLabel = hasGps ? `${gps!.lat.toFixed(6)}, ${gps!.lon.toFixed(6)}` : 'SIN GPS';
       const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
-      const ubicacionText = currentFormattedLocation && currentFormattedLocation !== "Buscando..." 
-        ? currentFormattedLocation 
-        : "Pendiente de geocodificación";
+      const ubicacionText = hasGps && currentFormattedLocation && currentFormattedLocation !== "Buscando..."
+        ? currentFormattedLocation
+        : (hasGps ? "Pendiente de geocodificación" : "");
 
       const uuid = crypto.randomUUID ? crypto.randomUUID() : 'ev_' + Date.now() + Math.random().toString(36).substr(2, 9);
       const fileName = `FT_${uuid}.jpg`;
@@ -363,10 +434,11 @@ export default function App() {
         fecha,
         hora,
         timestamp,
-        latitude: gps?.lat || 0,
-        longitude: gps?.lon || 0,
-        gpsAccuracy: gps?.accuracy,
-        gpsCapturedAt: capturedAt,
+        latitude: hasGps ? gps!.lat : null,
+        longitude: hasGps ? gps!.lon : null,
+        gpsAccuracy: hasGps ? gps!.accuracy : undefined,
+        gpsCapturedAt: hasGps ? capturedAt : undefined,
+        gpsLabel,
         ubicacion: ubicacionText,
         baseFields: { 
           tecnico: selectedProject.techName || "TECNICO" 
@@ -610,7 +682,7 @@ export default function App() {
                         }}
                         className="aspect-[4/5] rounded-[2rem] overflow-hidden border border-gray-100 relative group shadow-sm bg-white cursor-pointer"
                       >
-                        <EvidenceImage photoId={ev.photoPath} className="w-full h-full object-cover" />
+                        <EvidenceCard evidence={ev} />
                         <div className="absolute top-3 left-3 flex gap-1">
                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]"></div>
                         </div>
@@ -653,14 +725,20 @@ export default function App() {
                     screenshotQuality={0.92}
                     onUserMedia={() => {
                       console.log('Camera ready');
-                      requestAnimationFrame(() => {
+                      const forcePlay = () => {
                         const video = webcamRef.current?.video;
-                        if (video) {
-                          video.muted = true;
-                          video.setAttribute('playsinline', 'true');
-                          void video.play().catch((err) => console.warn('Camera autoplay:', err));
-                        }
-                      });
+                        if (!video) return;
+                        video.muted = true;
+                        video.playsInline = true;
+                        video.setAttribute('playsinline', 'true');
+                        video.setAttribute('webkit-playsinline', 'true');
+                        video.removeAttribute('controls');
+                        void video.play().catch(() => {});
+                      };
+                      forcePlay();
+                      requestAnimationFrame(forcePlay);
+                      setTimeout(forcePlay, 100);
+                      setTimeout(forcePlay, 400);
                     }}
                     onLoadedMetadata={(event) => {
                       const video = event.currentTarget;
@@ -1298,7 +1376,31 @@ export default function App() {
             )}
 
             {/* SUCCESS VIEW - REMOVED PER INSTRUCTION, BUT KEPT PLACEHOLDER IF NEEDED */}
-          </AnimatePresence>
+          
+        {showEvidenceList && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/70 backdrop-blur-sm flex flex-col"
+          >
+            <div className="flex items-center justify-between px-4 py-4 bg-white border-b">
+              <h2 className="text-sm font-black uppercase tracking-tight">Evidencias del proyecto</h2>
+              <button type="button" onClick={() => setShowEvidenceList(false)} className="text-xs font-bold uppercase text-gray-500 px-3 py-2">Cerrar</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-3 bg-gray-50">
+              {evidences.length === 0 ? (
+                <p className="col-span-2 text-center text-sm text-gray-400 py-12">Sin evidencias aun</p>
+              ) : (
+                evidences.map((ev: any) => (
+                  <EvidenceCard key={ev.id || ev.uuid} evidence={ev} />
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+
+      </AnimatePresence>
         </div>
 
         {/* Global Action Bar */}

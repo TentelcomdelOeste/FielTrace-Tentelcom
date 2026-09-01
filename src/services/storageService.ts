@@ -6,7 +6,6 @@
  * Separa metadatos de evidencias (IndexedDB con índices) y referencias a fotos (Galería Nativa / Web Fallback).
  */
 
-import { Capacitor } from '@capacitor/core';
 import type { Project, Evidence, Template, SyncQueue } from '../types';
 import { firebaseService } from './firebaseService';
 
@@ -195,16 +194,8 @@ export const storageService = {
 
     const evidenceId = await manager.add(STORE_EVIDENCES, evidenceToSave);
 
-    // En navegador web (preview sin galería nativa), almacenamos el blob en STORE_PHOTOS como respaldo
-    if (Capacitor.getPlatform() === 'web') {
-      try {
-        const response = await fetch(imageBase64);
-        const blob = await response.blob();
-        await manager.put(STORE_PHOTOS, { id: evidenceToSave.photoPath, blob });
-      } catch (e) {
-        console.error('[StorageService] Error guardando respaldo web de la foto:', e);
-      }
-    }
+    // La fotografía NO se persiste en IndexedDB; se conserva únicamente en la galería del dispositivo.
+    // La evidencia almacenada aquí contiene solo metadatos para historial y sincronización.
 
     // Intentar sincronizar con Firebase en segundo plano si hay internet (NO sube fotos, solo metadatos)
     if (navigator.onLine) {

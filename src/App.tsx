@@ -35,7 +35,6 @@ import {
 } from 'lucide-react';
 import { AutoResizingTextarea } from './components/AutoResizingTextarea';
 import { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
-import { Capacitor } from '@capacitor/core';
 
 function getFormattedLocationText(loc: any, selectedProject: any): string {
   if (!loc) return "Buscando...";
@@ -312,18 +311,12 @@ export default function App() {
     setIsProcessing(true);
     
     try {
-      let rawImage: string | null = null;
-      const isNative = Capacitor.isNativePlatform();
-
-      if (isNative) {
-        rawImage = await cameraService.takePhoto();
-      } else {
-        if (!webcamRef.current) {
-          setIsProcessing(false);
-          return;
-        }
-        rawImage = webcamRef.current.getScreenshot();
+      if (!webcamRef.current) {
+        setIsProcessing(false);
+        return;
       }
+
+      const rawImage = webcamRef.current.getScreenshot();
 
       if (!rawImage) {
         console.error('No se pudo capturar la imagen');
@@ -643,36 +636,24 @@ export default function App() {
               >
                 {/* Real-time Camera Bridge */}
                 <div className="relative flex-1 bg-gray-950 overflow-hidden">
-                  {Capacitor.isNativePlatform() ? (
-                    <div className="w-full h-full flex flex-col items-center justify-center bg-gray-900 text-white p-6 text-center space-y-4">
-                      <div className="w-20 h-20 bg-blue-600/20 rounded-full flex items-center justify-center border-2 border-blue-500/50 animate-pulse">
-                        <CameraIcon className="w-10 h-10 text-blue-400" />
-                      </div>
-                      <h3 className="text-xl font-bold">Cámara Nativa Android</h3>
-                      <p className="text-sm text-gray-400 max-w-xs">
-                        Presiona el botón inferior de captura para abrir la cámara nativa, tomar la foto y aplicar el overlay técnico.
-                      </p>
-                    </div>
-                  ) : (
-                    <Webcam
-                      audio={false}
-                      ref={webcamRef}
-                      screenshotFormat="image/jpeg"
-                      videoConstraints={{ 
-                        facingMode: "environment",
-                        width: { ideal: 4096 },
-                        height: { ideal: 2160 }
-                      }}
-                      className="w-full h-full object-cover"
-                      mirrored={false}
-                      forceScreenshotSourceSize={true}
-                      imageSmoothing={true}
-                      disablePictureInPicture={true}
-                      screenshotQuality={0.92}
-                      onUserMedia={() => console.log('Camera ready')}
-                      onUserMediaError={(err) => console.error('Camera error', err)}
-                    />
-                  )}
+                  <Webcam
+                    audio={false}
+                    ref={webcamRef}
+                    screenshotFormat="image/jpeg"
+                    videoConstraints={{
+                      facingMode: { exact: "environment" },
+                      width: { ideal: 4096 },
+                      height: { ideal: 2160 }
+                    }}
+                    className="w-full h-full object-cover"
+                    mirrored={false}
+                    forceScreenshotSourceSize={true}
+                    imageSmoothing={true}
+                    disablePictureInPicture={true}
+                    screenshotQuality={0.92}
+                    onUserMedia={() => console.log('Camera ready')}
+                    onUserMediaError={(err) => console.error('Camera error', err)}
+                  />
                   
                   {/* Flash Feedback Layer */}
                   <div id="camera-pulse" className="absolute inset-0 pointer-events-none transition-colors duration-100"></div>

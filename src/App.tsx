@@ -181,7 +181,7 @@ export default function App() {
         watchId = id;
       });
       if (Capacitor.isNativePlatform() && selectedProject) {
-        captureBatchPhoto().then(() => {
+        captureBatchPhoto().finally(() => {
           setCurrentStep('history');
         });
       }

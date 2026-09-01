@@ -10,30 +10,36 @@ import { Media } from '@capacitor-community/media';
 import { Capacitor } from '@capacitor/core';
 
 export const cameraService = {
-  async takePhoto() {
+  async takePhoto(): Promise<string | null> {
     if (Capacitor.isNativePlatform()) {
       try {
         const check = await Camera.checkPermissions();
         if (check.camera !== 'granted') {
-          const request = await Camera.requestPermissions();
+          const request = await Camera.requestPermissions({ permissions: ['camera'] });
           if (request.camera !== 'granted') {
-            throw new Error('Permiso de cámara denegado por el usuario');
+            console.warn('Permiso de cámara denegado por el usuario.');
+            return null;
           }
         }
       } catch (e) {
         console.error('Error al verificar o solicitar permiso de cámara:', e);
-        throw e;
+        return null;
       }
     }
 
-    const image = await Camera.getPhoto({
-      quality: 90,
-      allowEditing: false,
-      resultType: CameraResultType.DataUrl,
-      source: CameraSource.Camera,
-      saveToGallery: false
-    });
-    return image.dataUrl;
+    try {
+      const image = await Camera.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.DataUrl,
+        source: CameraSource.Camera,
+        saveToGallery: false
+      });
+      return image.dataUrl || null;
+    } catch (err) {
+      console.warn('Error capturando foto o cancelación de la cámara:', err);
+      return null;
+    }
   },
 
   async drawOverlay(imageSrc: string, metadata: any): Promise<string> {

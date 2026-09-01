@@ -229,10 +229,11 @@ export default function App() {
     const t1 = setTimeout(forcePlay, 80);
     const t2 = setTimeout(forcePlay, 300);
     const t3 = setTimeout(forcePlay, 800);
+    const iv = setInterval(forcePlay, 600);
     const onPointer = () => forcePlay();
     window.addEventListener('pointerdown', onPointer, { once: true });
     return () => {
-      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3);
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearInterval(iv);
       window.removeEventListener('pointerdown', onPointer);
     };
   }, [currentStep]);
@@ -717,7 +718,7 @@ export default function App() {
                       width: { ideal: 1920 },
                       height: { ideal: 1080 }
                     }}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-cover camera-preview-video"
                     mirrored={false}
                     forceScreenshotSourceSize={true}
                     imageSmoothing={true}
@@ -850,11 +851,7 @@ export default function App() {
                   </button>
 
                   <button 
-                    onClick={() => {
-                      if (lastImage) {
-                         setShowLastImage(true);
-                      }
-                    }} 
+                    onClick={() => setShowEvidenceList(true)} 
                     className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white"
                   >
                     {lastImage ? (
@@ -1397,6 +1394,7 @@ export default function App() {
                 ))
               )}
             </div>
+            <p className="text-center text-[10px] text-white/70 py-3 bg-black">Las fotos estan en Galeria &gt; album Field Trace</p>
           </motion.div>
         )}
 

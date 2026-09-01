@@ -11,5 +11,6 @@
     "Technical Metadata Overlay",
     "Firebase Cloud Firestore Sync",
     "Template Engine"
-  ]
+  ],
+  "buildRevision": "android-camera-gps-gallery-fix"
 }

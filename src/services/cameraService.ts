@@ -1,28 +1,347 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * VERSIÓN NATIVA ROBUSTA - cámara, overlay y galería
+ * VERSIÓN NATIVA ROBUSTA - cámara embebida, overlay y galería
  */
 
-import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
+import { CameraPreview } from '@capgo/camera-preview';
+import { Camera } from '@capacitor/camera';
 import { Media } from '@capacitor-community/media';
+import { Geolocation } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
+
+let previewRunning = false;
+let previewStarting = false;
+let previewHost: HTMLElement | null = null;
+let previewObserverInstalled = false;
+let previewStyle: HTMLStyleElement | null = null;
+const previousBackgrounds = new Map<HTMLElement, string>();
+
+function isNativeAndroid(): boolean {
+  return Capacitor.getPlatform() === 'android';
+}
+
+function findNativeCameraHost(): HTMLElement | null {
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>('div'));
+  return candidates.find((el) => {
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    return text.includes('Cámara Nativa Android') && el.children.length >= 1;
+  }) || null;
+}
+
+function makeCameraSurfaceTransparent(host: HTMLElement) {
+  let el: HTMLElement | null = host;
+  let depth = 0;
+  while (el && depth < 5) {
+    if (!previousBackgrounds.has(el)) previousBackgrounds.set(el, el.style.backgroundColor);
+    el.style.backgroundColor = 'transparent';
+    el = el.parentElement;
+    depth += 1;
+  }
+
+  if (!previewStyle) {
+    previewStyle = document.createElement('style');
+    previewStyle.id = 'field-trace-camera-preview-style';
+    previewStyle.textContent = `
+      html.ft-camera-preview-active,
+      html.ft-camera-preview-active body,
+      html.ft-camera-preview-active #root {
+        background: transparent !important;
+      }
+      html.ft-camera-preview-active body,
+      html.ft-camera-preview-active #root {
+        background-color: transparent !important;
+      }
+    `;
+    document.head.appendChild(previewStyle);
+  }
+  document.documentElement.classList.add('ft-camera-preview-active');
+}
+
+function restoreCameraSurface() {
+  previousBackgrounds.forEach((background, el) => {
+    el.style.backgroundColor = background;
+  });
+  previousBackgrounds.clear();
+  document.documentElement.classList.remove('ft-camera-preview-active');
+  previewStyle?.remove();
+  previewStyle = null;
+}
+
+function styleControlButton(button: HTMLButtonElement) {
+  button.type = 'button';
+  button.style.cssText = [
+    'min-width:44px',
+    'height:44px',
+    'padding:0 12px',
+    'border-radius:999px',
+    'border:1px solid rgba(255,255,255,.22)',
+    'background:rgba(0,0,0,.48)',
+    'backdrop-filter:blur(10px)',
+    '-webkit-backdrop-filter:blur(10px)',
+    'color:#fff',
+    'font:700 13px system-ui,sans-serif',
+    'display:flex',
+    'align-items:center',
+    'justify-content:center',
+    'gap:6px',
+    'box-shadow:0 4px 14px rgba(0,0,0,.28)',
+    'touch-action:manipulation',
+    'cursor:pointer'
+  ].join(';');
+}
+
+function installControls(host: HTMLElement) {
+  if (host.querySelector('[data-ft-camera-controls]')) return;
+
+  Array.from(host.children).forEach((child) => {
+    (child as HTMLElement).style.display = 'none';
+  });
+
+  const controls = document.createElement('div');
+  controls.dataset.ftCameraControls = '1';
+  controls.style.cssText = 'position:absolute;inset:0;z-index:9999;pointer-events:none;';
+
+  const topRight = document.createElement('div');
+  topRight.style.cssText = 'position:absolute;top:18px;right:18px;display:flex;align-items:center;gap:8px;pointer-events:auto;';
+
+  const flash = document.createElement('button');
+  flash.textContent = '⚡ AUTO';
+  styleControlButton(flash);
+
+  const flip = document.createElement('button');
+  flip.textContent = '↻';
+  flip.setAttribute('aria-label', 'Cambiar cámara');
+  styleControlButton(flip);
+
+  const grid = document.createElement('button');
+  grid.textContent = '▦';
+  grid.setAttribute('aria-label', 'Cuadrícula');
+  styleControlButton(grid);
+
+  topRight.append(flash, flip, grid);
+
+  const zoomBar = document.createElement('div');
+  zoomBar.style.cssText = 'position:absolute;bottom:24px;left:50%;transform:translateX(-50%);display:flex;gap:8px;pointer-events:auto;';
+
+  controls.append(topRight, zoomBar);
+  host.appendChild(controls);
+
+  let flashModes: string[] = ['off', 'auto', 'on', 'torch'];
+  let flashIndex = 1;
+  let gridMode = 'none';
+
+  CameraPreview.getSupportedFlashModes().then((result: any) => {
+    const supported = result?.result || [];
+    if (Array.isArray(supported) && supported.length) flashModes = supported;
+    flashIndex = Math.max(0, flashModes.indexOf('auto'));
+    if (flashIndex < 0) flashIndex = 0;
+  }).catch(() => undefined);
+
+  flash.addEventListener('click', async () => {
+    flashIndex = (flashIndex + 1) % flashModes.length;
+    const mode = flashModes[flashIndex];
+    try {
+      await CameraPreview.setFlashMode({ flashMode: mode as any });
+      flash.textContent = `⚡ ${mode.toUpperCase()}`;
+    } catch (e) {
+      console.warn('[CameraPreview] flash:', e);
+    }
+  });
+
+  flip.addEventListener('click', async () => {
+    try {
+      await CameraPreview.flip();
+    } catch (e) {
+      console.warn('[CameraPreview] flip:', e);
+    }
+  });
+
+  grid.addEventListener('click', async () => {
+    gridMode = gridMode === 'none' ? '3x3' : gridMode === '3x3' ? '4x4' : 'none';
+    try {
+      await CameraPreview.setGridMode({ gridMode: gridMode as any });
+      grid.textContent = gridMode === 'none' ? '▦' : gridMode === '3x3' ? '3×3' : '4×4';
+    } catch (e) {
+      console.warn('[CameraPreview] grid:', e);
+    }
+  });
+
+  CameraPreview.getZoomButtonValues().then((result: any) => {
+    const values = Array.isArray(result?.values) && result.values.length ? result.values : [1, 2, 3];
+    zoomBar.replaceChildren();
+    values.forEach((value: number) => {
+      const button = document.createElement('button');
+      button.textContent = `${value}×`;
+      styleControlButton(button);
+      button.addEventListener('click', async () => {
+        try {
+          await CameraPreview.setZoom({ level: value, autoFocus: true });
+          Array.from(zoomBar.children).forEach((child) => {
+            (child as HTMLElement).style.background = 'rgba(0,0,0,.48)';
+          });
+          button.style.background = 'rgba(37,99,235,.78)';
+        } catch (e) {
+          console.warn('[CameraPreview] zoom:', e);
+        }
+      });
+      zoomBar.appendChild(button);
+    });
+  }).catch(() => {
+    [1, 2, 3].forEach((value) => {
+      const button = document.createElement('button');
+      button.textContent = `${value}×`;
+      styleControlButton(button);
+      button.addEventListener('click', () => CameraPreview.setZoom({ level: value, autoFocus: true }).catch(() => undefined));
+      zoomBar.appendChild(button);
+    });
+  });
+}
+
+async function requestLocationBeforeCamera(): Promise<void> {
+  try {
+    const check = await Geolocation.checkPermissions();
+    if (check.location !== 'granted') {
+      await Geolocation.requestPermissions();
+    }
+  } catch (e) {
+    console.warn('[GPS] No se pudo solicitar permiso antes de cámara:', e);
+  }
+}
+
+async function startNativePreview(host: HTMLElement): Promise<void> {
+  if (!isNativeAndroid() || previewRunning || previewStarting) return;
+  previewStarting = true;
+  previewHost = host;
+  try {
+    makeCameraSurfaceTransparent(host);
+    installControls(host);
+
+    // GPS primero, luego cámara. Así el usuario ve ambos permisos en orden.
+    await requestLocationBeforeCamera();
+
+    const permissions = await CameraPreview.checkPermissions({ disableAudio: true });
+    if (permissions.camera !== 'granted') {
+      const requested = await CameraPreview.requestPermissions({
+        disableAudio: true,
+        title: 'Permiso de cámara',
+        message: 'Field Trace necesita la cámara para capturar evidencias técnicas.',
+        cancelButtonTitle: 'Cancelar'
+      });
+      if (requested.camera !== 'granted') {
+        console.warn('[CameraPreview] Permiso de cámara no concedido.');
+        return;
+      }
+    }
+
+    await CameraPreview.start({
+      position: 'rear',
+      aspectRatio: 'fill',
+      aspectMode: 'cover',
+      includeSafeAreaInsets: true,
+      toBack: true,
+      disableAudio: true,
+      disableFocusIndicator: false,
+      gridMode: 'none',
+      initialZoomLevel: 1,
+      force: false
+    });
+
+    previewRunning = true;
+    console.info('[CameraPreview] Vista previa nativa iniciada.');
+  } catch (e) {
+    console.error('[CameraPreview] No se pudo iniciar la vista previa:', e);
+  } finally {
+    previewStarting = false;
+  }
+}
+
+async function stopNativePreview(): Promise<void> {
+  if (!previewRunning && !previewStarting) return;
+  try {
+    await CameraPreview.stop({ force: true });
+  } catch (e) {
+    console.warn('[CameraPreview] stop:', e);
+  } finally {
+    previewRunning = false;
+    previewStarting = false;
+    previewHost = null;
+    restoreCameraSurface();
+  }
+}
+
+function installPreviewObserver() {
+  if (previewObserverInstalled || !isNativeAndroid() || typeof document === 'undefined') return;
+  previewObserverInstalled = true;
+
+  const sync = () => {
+    const host = findNativeCameraHost();
+    if (host) {
+      previewHost = host;
+      makeCameraSurfaceTransparent(host);
+      installControls(host);
+      if (!previewRunning && !previewStarting) void startNativePreview(host);
+    } else if (previewRunning || previewStarting) {
+      void stopNativePreview();
+    }
+  };
+
+  const observer = new MutationObserver(sync);
+  observer.observe(document.documentElement, { childList: true, subtree: true });
+  setTimeout(sync, 50);
+  setTimeout(sync, 300);
+  setTimeout(sync, 1000);
+}
+
+if (typeof document !== 'undefined') {
+  installPreviewObserver();
+}
 
 export const cameraService = {
   async takePhoto(): Promise<string | null> {
     if (Capacitor.isNativePlatform()) {
-      // Pedimos explícitamente cámara antes de abrir la Activity nativa.
       try {
-        const check = await Camera.checkPermissions();
-        if (check.camera !== 'granted') {
-          const request = await Camera.requestPermissions({ permissions: ['camera'] });
-          if (request.camera !== 'granted') {
-            console.warn('[Cámara] Permiso de cámara no concedido.');
-            return null;
+        if (isNativeAndroid()) {
+          const running = await CameraPreview.isRunning();
+          if (!running) {
+            const host = findNativeCameraHost();
+            if (host) await startNativePreview(host);
           }
+          const result = await CameraPreview.capture({
+            quality: 95,
+            format: 'jpeg',
+            saveToGallery: false,
+            withExifLocation: false,
+            photoQualityPrioritization: 'quality'
+          });
+          return result.value?.startsWith('data:') ? result.value : `data:image/jpeg;base64,${result.value}`;
         }
       } catch (e) {
-        console.error('[Cámara] Error solicitando permiso:', e);
+        console.warn('[CameraPreview] Capture falló, se intenta Camera API:', e);
+      }
+
+      try {
+        const userActivation = (navigator as any).userActivation;
+        if (userActivation && !userActivation.isActive) {
+          console.info('[Cámara] Llamada automática ignorada; esperando pulsación del obturador.');
+          return null;
+        }
+        const check = await Camera.checkPermissions();
+        if (check.camera !== 'granted') {
+          const request = await Camera.requestPermissions();
+          if (request.camera !== 'granted') return null;
+        }
+        const image = await Camera.getPhoto({
+          quality: 95,
+          allowEditing: false,
+          resultType: 'dataUrl' as any,
+          source: 'CAMERA' as any,
+          saveToGallery: false,
+          correctOrientation: true
+        });
+        return image.dataUrl || null;
+      } catch (err) {
+        console.warn('Error capturando foto o cancelación de la cámara nativa:', err);
         return null;
       }
     }
@@ -31,24 +350,29 @@ export const cameraService = {
       const image = await Camera.getPhoto({
         quality: 95,
         allowEditing: false,
-        resultType: CameraResultType.DataUrl,
-        source: CameraSource.Camera,
+        resultType: 'dataUrl' as any,
+        source: 'CAMERA' as any,
         saveToGallery: false,
         correctOrientation: true
       });
       return image.dataUrl || null;
     } catch (err) {
-      console.warn('Error capturando foto o cancelación de la cámara:', err);
+      console.warn('Error capturando foto:', err);
       return null;
     }
   },
 
   async drawOverlay(imageSrc: string, metadata: any): Promise<string> {
     return new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(imageSrc), 5000);
+      const timeout = setTimeout(() => {
+        console.warn('drawOverlay timed out, returning original image');
+        resolve(imageSrc);
+      }, 5000);
+
       const img = new Image();
       img.onerror = () => {
         clearTimeout(timeout);
+        console.error('Error loading image for overlay');
         resolve(imageSrc);
       };
       img.onload = () => {
@@ -79,29 +403,34 @@ export const cameraService = {
           ctx.textBaseline = 'top';
 
           const rawLines: string[] = [];
-          if (metadata.projectName) rawLines.push(metadata.projectName.toUpperCase());
-          if (metadata.settings?.showDateTime && metadata.dateTimeFormatted) rawLines.push(metadata.dateTimeFormatted);
+          if (metadata.projectName) rawLines.push(`${metadata.projectName.toUpperCase()}`);
+          if (metadata.settings?.showDateTime && metadata.dateTimeFormatted) rawLines.push(`${metadata.dateTimeFormatted}`);
           if (metadata.settings?.showGps) {
             const lat = Number(metadata.latitude);
             const lon = Number(metadata.longitude);
             rawLines.push(`${lat.toFixed(6)}, ${lon.toFixed(6)}`);
           }
-          if (metadata.settings?.showLocation && metadata.ubicacion) rawLines.push(metadata.ubicacion.toUpperCase());
-          if (metadata.settings?.showTech) rawLines.push(metadata.baseFields?.tecnico || 'N/A');
+          if (metadata.settings?.showLocation && metadata.ubicacion) rawLines.push(`${metadata.ubicacion.toUpperCase()}`);
+          if (metadata.settings?.showTech) rawLines.push(`${metadata.baseFields?.tecnico || 'N/A'}`);
           (metadata.customFields || []).forEach((cf: any) => {
-            if (cf.active !== false && cf.showInPhoto && cf.name) {
-              rawLines.push(cf.value && cf.value.trim() !== '' ? `${cf.name.toUpperCase()}: ${cf.value.toUpperCase()}` : cf.name.toUpperCase());
+            if (cf.active !== false && cf.showInPhoto) {
+              if (cf.value && cf.value.trim() !== '') rawLines.push(`${cf.name.toUpperCase()}: ${cf.value.toUpperCase()}`);
+              else if (cf.name) rawLines.push(`${cf.name.toUpperCase()}`);
             }
           });
           if (rawLines.length === 0) return resolve(imageSrc);
 
-          const pOverlay = metadata.settings?.overlayPosition || 'top-left';
-          const pLogo = metadata.settings?.logoPosition || 'top-left';
+          const p_overlayPos = metadata.settings?.overlayPosition || 'top-left';
+          const p_logoPos = metadata.settings?.logoPosition || 'top-left';
           const hasLogo = !!metadata.settings?.logoImage;
           const logoSizeSetting = metadata.settings?.logoSize || 20;
           const logoCanvasWidth = (canvas.width * logoSizeSetting) / 100;
-          const sameYDifferentX = (pOverlay.includes('top') && pLogo.includes('top') && pOverlay !== pLogo) || (pOverlay.includes('bottom') && pLogo.includes('bottom') && pOverlay !== pLogo);
-          const maxTextWidth = hasLogo && sameYDifferentX ? canvas.width - (3 * margin) - logoCanvasWidth : canvas.width - (2 * margin);
+          const isSameYAndDifferentX =
+            (p_overlayPos.includes('top') && p_logoPos.includes('top') && p_overlayPos !== p_logoPos) ||
+            (p_overlayPos.includes('bottom') && p_logoPos.includes('bottom') && p_overlayPos !== p_logoPos);
+          const maxTextWidth = (hasLogo && isSameYAndDifferentX)
+            ? canvas.width - (3 * margin) - logoCanvasWidth
+            : canvas.width - (2 * margin);
 
           const lines: string[] = [];
           for (const rawLine of rawLines) {
@@ -136,12 +465,13 @@ export const cameraService = {
             ctx.textAlign = 'left';
             if (position === 'bottom-left') startY = canvas.height - totalHeight - margin;
           }
-          ctx.shadowColor = 'rgba(0,0,0,0.9)';
+
+          ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
           ctx.shadowBlur = 12;
           ctx.shadowOffsetX = 3;
           ctx.shadowOffsetY = 3;
           ctx.fillStyle = overlayColor;
-          lines.forEach((line, i) => ctx.fillText(line, startX, startY + i * lineHeight));
+          lines.forEach((line, index) => ctx.fillText(line, startX, startY + index * lineHeight));
           ctx.textAlign = 'left';
 
           if (metadata.settings?.logoImage) {
@@ -154,7 +484,8 @@ export const cameraService = {
                 const targetWidth = (canvas.width * logoSize) / 100;
                 const ratio = logoImg.height / logoImg.width;
                 const targetHeight = targetWidth * ratio;
-                let logoX = margin, logoY = margin;
+                let logoX = margin;
+                let logoY = margin;
                 if (logoPosition === 'top-right') logoX = canvas.width - targetWidth - margin;
                 if (logoPosition === 'bottom-left') logoY = canvas.height - targetHeight - margin;
                 if (logoPosition === 'bottom-right') {
@@ -169,8 +500,10 @@ export const cameraService = {
                 ctx.shadowOffsetY = 0;
                 ctx.drawImage(logoImg, logoX, logoY, targetWidth, targetHeight);
                 ctx.restore();
-              } catch {}
-              resolve(canvas.toDataURL('image/jpeg', 0.92));
+                resolve(canvas.toDataURL('image/jpeg', 0.92));
+              } catch {
+                resolve(canvas.toDataURL('image/jpeg', 0.92));
+              }
             };
             logoImg.onerror = () => resolve(canvas.toDataURL('image/jpeg', 0.92));
             logoImg.src = metadata.settings.logoImage;
@@ -185,15 +518,14 @@ export const cameraService = {
   },
 
   async saveToGallery(dataUrl: string, fileName: string): Promise<boolean> {
-    if (Capacitor.getPlatform() === 'web') return this._saveToIndexedDB(dataUrl, fileName);
-    if (Capacitor.getPlatform() === 'android' || Capacitor.getPlatform() === 'ios') return this._saveToNativeGallery(dataUrl, fileName);
+    const platform = Capacitor.getPlatform();
+    if (platform === 'web') return this._saveToIndexedDB(dataUrl, fileName);
+    if (platform === 'android' || platform === 'ios') return this._saveToNativeGallery(dataUrl, fileName);
     return false;
   },
 
   async _saveToNativeGallery(dataUrl: string, fileName: string): Promise<boolean> {
     try {
-      // Media 9.x acepta directamente data:image/jpeg;base64,... .
-      // En Android el albumIdentifier es obligatorio.
       let albums = await Media.getAlbums();
       let album = albums.albums.find((a: any) => a.name === 'Field Trace');
       if (!album) {
@@ -201,24 +533,21 @@ export const cameraService = {
           await Media.createAlbum({ name: 'Field Trace' });
           albums = await Media.getAlbums();
           album = albums.albums.find((a: any) => a.name === 'Field Trace');
-        } catch (e) {
-          console.warn('[Galería] No se pudo crear el álbum:', e);
+        } catch (albumError) {
+          console.warn('[Galería] No se pudo crear/obtener el álbum Field Trace:', albumError);
         }
       }
-      if (Capacitor.getPlatform() === 'android' && !album?.identifier) {
-        console.error('[Galería] No se encontró el identificador del álbum Field Trace.');
-        return false;
-      }
+
       const baseName = fileName.replace(/\.[^.]+$/, '');
-      await Media.savePhoto({
+      const result = await Media.savePhoto({
         path: dataUrl,
-        albumIdentifier: album?.identifier,
+        ...(album?.identifier ? { albumIdentifier: album.identifier } : {}),
         fileName: baseName
       });
-      console.log('[Galería] ✓ Foto guardada en Field Trace');
+      console.log('[Galería] ✓ Fotografía guardada:', result);
       return true;
     } catch (error: any) {
-      console.error('[Galería] ✗ Error:', error?.code || error?.message || error);
+      console.error('[Galería] ✗ Error guardando fotografía:', error?.code || error?.message || error);
       return false;
     }
   },
@@ -234,12 +563,15 @@ export const cameraService = {
         };
         request.onsuccess = () => {
           const db = request.result;
-          const tx = db.transaction('photos', 'readwrite');
-          const req = tx.objectStore('photos').put({ fileName, dataUrl, timestamp: new Date().toISOString(), size: dataUrl.length / 1024 });
-          req.onsuccess = () => resolve(true);
-          req.onerror = () => resolve(false);
+          const transaction = db.transaction('photos', 'readwrite');
+          const store = transaction.objectStore('photos');
+          const addRequest = store.put({ fileName, dataUrl, timestamp: new Date().toISOString(), size: dataUrl.length / 1024 });
+          addRequest.onsuccess = () => resolve(true);
+          addRequest.onerror = () => resolve(false);
         };
-      } catch { resolve(false); }
+      } catch {
+        resolve(false);
+      }
     });
   },
 
@@ -248,9 +580,10 @@ export const cameraService = {
       const request = indexedDB.open('FieldTracePhotos', 1);
       request.onsuccess = () => {
         const db = request.result;
-        const req = db.transaction('photos', 'readonly').objectStore('photos').getAll();
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => resolve([]);
+        const transaction = db.transaction('photos', 'readonly');
+        const store = transaction.objectStore('photos');
+        const getAllRequest = store.getAll();
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
       };
       request.onerror = () => resolve([]);
     });
@@ -261,9 +594,11 @@ export const cameraService = {
       const request = indexedDB.open('FieldTracePhotos', 1);
       request.onsuccess = () => {
         const db = request.result;
-        const req = db.transaction('photos', 'readonly').objectStore('photos').get(fileName);
-        req.onsuccess = () => {
-          const photo = req.result;
+        const transaction = db.transaction('photos', 'readonly');
+        const store = transaction.objectStore('photos');
+        const getRequest = store.get(fileName);
+        getRequest.onsuccess = () => {
+          const photo = getRequest.result;
           if (photo) {
             const link = document.createElement('a');
             link.href = photo.dataUrl;
@@ -274,7 +609,6 @@ export const cameraService = {
           }
           resolve();
         };
-        req.onerror = () => resolve();
       };
       request.onerror = () => resolve();
     });

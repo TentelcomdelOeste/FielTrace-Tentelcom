@@ -38,66 +38,19 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Configure native camera entry flow
+      - name: Configure native camera preview flow
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
           p = Path('src/App.tsx')
           s = p.read_text()
-          old = '''  useEffect(() => {
-            let watchId: string | null = null;
-            if (currentStep === 'camera') {
-              locationService.watchPosition().then(id => {
-                watchId = id;
-              });
-              if (Capacitor.isNativePlatform() && selectedProject) {
-                captureBatchPhoto().finally(() => {
-                  setCurrentStep('history');
-                });
-              }
-            }
-            return () => {
-              if (watchId) {
-                locationService.clearWatch(watchId);
-              }
-            };
-          }, [currentStep, selectedProject]);'''
-          new = '''  useEffect(() => {
-            let watchId: string | null = null;
-            let active = true;
-            if (currentStep === 'camera') {
-              (async () => {
-                // 1) GPS primero: Android muestra aquí el permiso de ubicación.
-                if (Capacitor.isNativePlatform()) {
-                  await locationService.checkAndRequestPermissions();
-                  if (!active) return;
-                  await locationService.getCurrentPosition();
-                }
-
-                // 2) Mantener el GPS actualizado mientras estamos en cámara.
-                if (active) {
-                  watchId = await locationService.watchPosition();
-                }
-
-                // 3) En Android la cámara nativa se abre automáticamente al entrar.
-                // No regresamos a History después de la foto: el usuario queda en
-                // Field Trace y puede volver a abrir la cámara con el obturador.
-                if (Capacitor.isNativePlatform() && selectedProject && active) {
-                  await captureBatchPhoto();
-                }
-              })();
-            }
-            return () => {
-              active = false;
-              if (watchId) {
-                locationService.clearWatch(watchId);
-              }
-            };
-          }, [currentStep, selectedProject]);'''
-          if old not in s:
-              raise SystemExit('Expected camera-entry effect not found; refusing to build an unverified APK.')
-          p.write_text(s.replace(old, new, 1))
+          pattern = r"\n\s*if \(Capacitor\.isNativePlatform\(\) && selectedProject\) \{\n\s*captureBatchPhoto\(\)\.finally\(\(\) => \{\n\s*setCurrentStep\('history'\);\n\s*\}\);\n\s*\}"
+          s, count = re.subn(pattern, '', s, count=1)
+          if count != 1:
+              raise SystemExit('Expected legacy automatic capture block not found; refusing to build an unverified APK.')
+          p.write_text(s)
           PY
 
       - name: Build web app
@@ -114,7 +67,7 @@ jobs:
             echo "Complete Android platform already present; preserving it."
           fi
 
-      - name: Ensure Android runtime permissions in manifest
+      - name: Ensure Android runtime permissions
         shell: bash
         run: |
           python3 - <<'PY'
@@ -130,7 +83,7 @@ jobs:
           marker = '</manifest>'
           missing = [x for x in required if x not in s]
           if missing:
-              s = s.replace(marker, '\\n    ' + '\\n    '.join(missing) + '\\n' + marker)
+              s = s.replace(marker, '\n    ' + '\n    '.join(missing) + '\n' + marker)
               p.write_text(s)
           print('Verified Android camera/location permissions in manifest')
           PY

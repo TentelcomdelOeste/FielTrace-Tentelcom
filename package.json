@@ -11,6 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@capgo/camera-preview": "^8.11.2",
     "@capacitor-community/media": "^9.1.0",
     "@capacitor/android": "^8.3.1",
     "@capacitor/camera": "^8.1.0",
@@ -36,7 +37,6 @@
     "react-dom": "^19.0.0",
     "react-webcam": "^7.2.0",
     "vite": "^6.2.0",
-    "vite-plugin-pwa": "^1.2.0",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
@@ -45,7 +45,6 @@
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
-    "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
 }

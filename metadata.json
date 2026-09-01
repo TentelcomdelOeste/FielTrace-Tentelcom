@@ -1,6 +1,6 @@
 {
   "name": "Remix: Field Trace",
-  "description": "App técnica de evidencia de campo con arquitectura offline-first, almacenamiento IndexedDB y sistema de colas de sincronización.",
+  "description": "App técnica de evidencia de campo con cámara nativa Android, GPS, overlay técnico, galería y arquitectura offline-first.",
   "requestFramePermissions": [
     "camera",
     "geolocation"

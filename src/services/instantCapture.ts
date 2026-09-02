@@ -1,31 +1,67 @@
 import { CameraPreview } from '@capgo/camera-preview';
 
 /**
- * The app's capture handler already owns the evidence-processing pipeline.
- * For the shutter itself we prefer the current preview frame, which avoids
- * waiting for a full sensor still-image pipeline on slower Android devices.
- * If the frame API is unavailable/fails, the native still capture remains the
- * safe fallback.
+ * Keep a recent preview frame ready in memory. The shutter can then return a
+ * frame immediately instead of waiting for the full still-image pipeline.
+ * This mirrors the low-latency / zero-shutter-lag approach used by CameraX,
+ * while staying within the public API exposed by camera-preview.
  */
 const preview: any = CameraPreview as any;
 const originalCapture = typeof preview.capture === 'function'
   ? preview.capture.bind(preview)
   : null;
 
+let latestSample: any = null;
+let warming = false;
+let timer: ReturnType<typeof setTimeout> | null = null;
+let started = false;
+
+const warmFrame = async () => {
+  if (warming || typeof preview.captureSample !== 'function') return;
+  warming = true;
+  try {
+    const running = await CameraPreview.isRunning();
+    if (running) {
+      const sample = await preview.captureSample({ quality: 80 });
+      if (sample?.value) latestSample = sample;
+    }
+  } catch (error) {
+    // Camera may be stopped while leaving the camera screen; retry silently.
+    console.debug('[Camera] preview prewarm:', error);
+  } finally {
+    warming = false;
+    timer = setTimeout(() => void warmFrame(), 250);
+  }
+};
+
+if (!started) {
+  started = true;
+  void warmFrame();
+}
+
 if (originalCapture && !preview.__fieldTraceInstantCapturePatched) {
   preview.__fieldTraceInstantCapturePatched = true;
   preview.capture = async (options: any = {}) => {
+    // Prefer the most recent preview frame: this resolves almost immediately.
+    if (latestSample?.value) return latestSample;
+
+    // Cold-start fallback if the first frame has not been warmed yet.
     try {
-      const running = await CameraPreview.isRunning();
-      if (running && typeof preview.captureSample === 'function') {
+      if (typeof preview.captureSample === 'function') {
         const sample = await preview.captureSample({
           quality: typeof options.quality === 'number' ? options.quality : 80,
         });
-        if (sample?.value) return sample;
+        if (sample?.value) {
+          latestSample = sample;
+          return sample;
+        }
       }
     } catch (error) {
       console.warn('[Camera] Instant frame capture unavailable; using native still capture:', error);
     }
+
     return originalCapture(options);
   };
 }
+
+void timer;

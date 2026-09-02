@@ -223,6 +223,8 @@ export default function App() {
   const [editingProject, setEditingProject] = useState<Partial<Project> | null>(null);
   
   const [isProcessing, setIsProcessing] = useState(false);
+  // Anti doble-tap sin bloquear UI: ref no re-renderiza ni muestra spinner
+  const capturingRef = useRef(false);
   const [unlockedSettings, setUnlockedSettings] = useState<Record<string, boolean>>({});
   const [lastImage, setLastImage] = useState<string | null>(null);
   const [showLastImage, setShowLastImage] = useState(false);
@@ -449,28 +451,19 @@ export default function App() {
   };
 
   const captureBatchPhoto = async () => {
-    if (!selectedProject || isProcessing) return;
-
-    // Feedback visual inmediato (no bloquea)
-    const pulse = document.getElementById('camera-pulse');
-    if (pulse) {
-      pulse.classList.add('bg-white/60');
-      setTimeout(() => pulse.classList.remove('bg-white/60'), 120);
-    }
-
-    // Bloqueo SOLO durante la captura nativa del sensor (anti doble-tap).
-    // NO se espera flash, GPS, overlay, geocode, gallery ni IndexedDB.
-    setIsProcessing(true);
+    // Anti doble-tap con ref (sin spinner ni disabled en el botón)
+    if (!selectedProject || capturingRef.current) return;
+    capturingRef.current = true;
 
     try {
-      // Captura física: único await en el camino crítico del obturador
+      // Captura física: único await. El botón NO se bloquea visualmente.
       const captureResult = await CameraPreview.capture({ width: 1920, quality: 80, format: 'jpeg' });
       const capturedValue = captureResult?.value;
       const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
 
-      // Liberar obturador INMEDIATAMENTE tras obtener la foto del sensor
-      setIsProcessing(false);
+      // Liberar anti doble-tap al instante (botón ya disponible para siguiente foto)
+      capturingRef.current = false;
 
       // Re-armar flash en background (no bloquea siguiente disparo)
       if (flashMode === 'on') {
@@ -590,9 +583,10 @@ export default function App() {
 
     } catch (e: any) {
       console.error('Batch capture error', e);
-      setIsProcessing(false);
+      capturingRef.current = false;
     } finally {
-      // Re-armar el flash inmediatamente para la siguiente captura consecutiva
+      capturingRef.current = false;
+      // Re-armar el flash en background (no bloquea)
       if (flashMode === 'on') {
         void ensureFlashArmed('on');
       }
@@ -1461,11 +1455,10 @@ export default function App() {
             
             <button 
               onClick={captureBatchPhoto}
-              disabled={isProcessing}
               className="w-16 h-16 bg-white rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform"
             >
               <div className="w-full h-full bg-white rounded-full shadow-inner flex items-center justify-center">
-                 {isProcessing ? <RefreshCcw className="w-6 h-6 text-blue-600 animate-spin"/> : <div className="w-10 h-10 border-4 border-gray-100 rounded-full"></div>}
+                 <div className="w-10 h-10 border-4 border-gray-100 rounded-full"></div>
               </div>
             </button>
 

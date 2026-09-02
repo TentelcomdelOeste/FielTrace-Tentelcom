@@ -29,6 +29,7 @@ jobs:
           grep -q "locationService.checkAndRequestPermissions" src/components/CameraScreen.tsx
           grep -q "'auto'" src/components/CameraScreen.tsx
           grep -q "onPointerMove={handleGearPointerMove}" src/components/CameraScreen.tsx
+          grep -q "import { useEffect, useRef, useState, type PointerEvent }" src/components/CameraScreen.tsx
           ! grep -q "flashMode.*torch" src/components/CameraScreen.tsx
           echo "FINAL SOURCE PATCH VERIFICATION PASSED"
 
@@ -36,7 +37,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/App.tsx
+          git add src/App.tsx src/components/CameraScreen.tsx
           git diff --cached --quiet && exit 0
           git commit -m "fix(camera): apply complete camera UX patch"
           git push

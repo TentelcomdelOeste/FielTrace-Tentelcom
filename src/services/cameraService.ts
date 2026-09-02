@@ -8,8 +8,35 @@ import { Media } from '@capacitor-community/media';
 import { Capacitor } from '@capacitor/core';
 
 let _cachedAlbumIdentifier: string | null = null;
+/** Last saved photo path or content URI (prefer content:// when available) */
 let _lastSavedPath: string | null = null;
+/** Last saved file name (for MediaStore lookup fallback on Android 10+) */
+let _lastSavedFileName: string | null = null;
 const ALBUM_NAME = 'Field Trace';
+
+/** Extract a usable path/URI from Media.savePhoto result */
+function extractSavedPath(result: any): string | null {
+  if (!result) return null;
+  const candidates = [
+    result.filePath,
+    result.path,
+    result.identifier,
+    result.uri,
+    result.contentUri,
+    result.mediaUri,
+  ];
+  for (const c of candidates) {
+    if (c != null && String(c).trim() !== '') return String(c).trim();
+  }
+  return null;
+}
+
+function rememberSaved(result: any, fileName: string) {
+  const path = extractSavedPath(result);
+  if (path) _lastSavedPath = path;
+  if (fileName) _lastSavedFileName = fileName.replace(/\.[^/.]+$/, '') + '.jpg';
+  console.log('[Gallery] rememberSaved path=', path, 'fileName=', _lastSavedFileName);
+}
 
 export const cameraService = {
   async drawOverlay(imageSrc: string, metadata: any): Promise<string> {
@@ -235,8 +262,7 @@ export const cameraService = {
         fileName: baseName,
       } as any);
       console.log('[Gallery] Saved to Field Trace album:', result);
-      const path = (result as any)?.filePath || (result as any)?.path || (result as any)?.identifier || null;
-      if (path) _lastSavedPath = String(path);
+      rememberSaved(result, baseName);
       return true;
     } catch (error: any) {
       console.error('[Gallery] Album save failed:', error?.code || error?.message || error);
@@ -251,8 +277,7 @@ export const cameraService = {
         fileName: baseName,
       } as any);
       console.log('[Gallery] Saved to Field Trace on retry:', result);
-      const path2 = (result as any)?.filePath || (result as any)?.path || (result as any)?.identifier || null;
-      if (path2) _lastSavedPath = String(path2);
+      rememberSaved(result, baseName);
       return true;
     } catch (error: any) {
       console.error('[Gallery] Retry album save failed:', error?.code || error?.message || error);
@@ -264,6 +289,7 @@ export const cameraService = {
         fileName: baseName,
       } as any);
       console.warn('[Gallery] Saved WITHOUT album (fallback):', result);
+      rememberSaved(result, baseName);
       return true;
     } catch (error: any) {
       console.error('[Gallery] Fallback save failed:', error?.code || error?.message || error);
@@ -336,17 +362,29 @@ export const cameraService = {
     return _lastSavedPath;
   },
 
+  getLastSavedFileName(): string | null {
+    return _lastSavedFileName;
+  },
+
   async openFieldTraceAlbum(preferLastPhoto = true): Promise<boolean> {
     try {
       const native = (window as any).FieldTraceNative;
 
-      if (preferLastPhoto && _lastSavedPath && native) {
-        if (typeof native.openUri === 'function') {
+      if (preferLastPhoto && native && typeof native.openUri === 'function') {
+        if (_lastSavedPath) {
           try {
             native.openUri(_lastSavedPath);
             return true;
           } catch (e) {
-            console.warn('[Gallery] FieldTraceNative.openUri failed', e);
+            console.warn('[Gallery] FieldTraceNative.openUri(path) failed', e);
+          }
+        }
+        if (_lastSavedFileName && typeof native.openByFileName === 'function') {
+          try {
+            native.openByFileName(_lastSavedFileName);
+            return true;
+          } catch (e) {
+            console.warn('[Gallery] FieldTraceNative.openByFileName failed', e);
           }
         }
       }

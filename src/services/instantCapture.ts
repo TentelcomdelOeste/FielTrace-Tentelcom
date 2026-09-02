@@ -13,11 +13,18 @@ const originalCapture = typeof preview.capture === 'function'
 
 let latestSample: any = null;
 let warming = false;
-let timer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
 
+const scheduleWarmFrame = () => {
+  setTimeout(() => void warmFrame(), 250);
+};
+
 const warmFrame = async () => {
-  if (warming || typeof preview.captureSample !== 'function') return;
+  if (warming || typeof preview.captureSample !== 'function') {
+    scheduleWarmFrame();
+    return;
+  }
+
   warming = true;
   try {
     const running = await CameraPreview.isRunning();
@@ -30,7 +37,7 @@ const warmFrame = async () => {
     console.debug('[Camera] preview prewarm:', error);
   } finally {
     warming = false;
-    timer = setTimeout(() => void warmFrame(), 250);
+    scheduleWarmFrame();
   }
 };
 
@@ -63,5 +70,3 @@ if (originalCapture && !preview.__fieldTraceInstantCapturePatched) {
     return originalCapture(options);
   };
 }
-
-void timer;

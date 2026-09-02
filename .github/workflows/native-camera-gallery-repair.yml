@@ -1,0 +1,190 @@
+name: One-time native camera and gallery repair
+
+on:
+  push:
+    branches:
+      - native-camera-gallery-fix
+
+permissions:
+  contents: write
+
+jobs:
+  repair-and-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply native camera/gallery implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          app = Path('src/App.tsx')
+          s = app.read_text()
+
+          if "import Webcam from 'react-webcam';" not in s:
+              raise SystemExit('Expected react-webcam import not found')
+          s = s.replace("import Webcam from 'react-webcam';", "import { CameraPreview } from '@capgo/camera-preview';")
+
+          old_camera_state = '''  const webcamRef = useRef<Webcam>(null);\n\n  const applyTorch = async (on: boolean) => {\n    try {\n      const video = webcamRef.current?.video as HTMLVideoElement | undefined;\n      const stream = video?.srcObject as MediaStream | null;\n      const track = stream?.getVideoTracks?.()[0];\n      if (!track) return;\n      const caps = track.getCapabilities?.() as any;\n      if (caps && 'torch' in caps) {\n        await track.applyConstraints({ advanced: [{ torch: on } as any] });\n      }\n    } catch (e) {\n      console.warn('Torch not supported', e);\n    }\n  };\n\n  const cycleZoom = () => {\n    setCameraZoom((z) => (z >= 3 ? 1 : z >= 2 ? 3 : 2));\n  };\n\n  const onCameraTouchStart = (e: React.TouchEvent) => {\n    if (e.touches.length === 2) {\n      const dx = e.touches[0].clientX - e.touches[1].clientX;\n      const dy = e.touches[0].clientY - e.touches[1].clientY;\n      pinchStartDist.current = Math.hypot(dx, dy);\n      pinchStartZoom.current = cameraZoom;\n    }\n  };\n\n  const onCameraTouchMove = (e: React.TouchEvent) => {\n    if (e.touches.length === 2 && pinchStartDist.current) {\n      const dx = e.touches[0].clientX - e.touches[1].clientX;\n      const dy = e.touches[0].clientY - e.touches[1].clientY;\n      const dist = Math.hypot(dx, dy);\n      const scale = dist / pinchStartDist.current;\n      let next = pinchStartZoom.current * scale;\n      next = Math.max(1, Math.min(4, next));\n      setCameraZoom(Math.round(next * 10) / 10);\n    }\n  };\n\n  const onCameraTouchEnd = () => {\n    pinchStartDist.current = null;\n  };\n\n  // Force play when entering camera (Android WebView)\n  useEffect(() => {\n    if (currentStep !== 'camera') return;\n    const forcePlay = () => {\n      const video = webcamRef.current?.video;\n      if (!video) return;\n      video.muted = true;\n      video.playsInline = true;\n      video.setAttribute('playsinline', 'true');\n      video.setAttribute('webkit-playsinline', 'true');\n      video.removeAttribute('controls');\n      void video.play().catch(() => {});\n    };\n    forcePlay();\n    const t1 = setTimeout(forcePlay, 80);\n    const t2 = setTimeout(forcePlay, 300);\n    const t3 = setTimeout(forcePlay, 800);\n    const iv = setInterval(forcePlay, 600);\n    const onPointer = () => forcePlay();\n    window.addEventListener('pointerdown', onPointer, { once: true });\n    return () => {\n      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearInterval(iv);\n      window.removeEventListener('pointerdown', onPointer);\n    };\n  }, [currentStep]);\n'''
+
+          if old_camera_state not in s:
+              raise SystemExit('Expected WebView camera control block not found')
+
+          new_camera_state = '''  const applyNativeZoom = async (level: number) => {\n    const next = Math.max(1, Math.min(8, Math.round(level * 10) / 10));\n    setCameraZoom(next);\n    try {\n      await CameraPreview.setZoom({ level: next });\n    } catch (e) {\n      console.warn('[Camera] Native zoom rejected:', e);\n    }\n  };\n\n  const cycleZoom = () => {\n    const next = cameraZoom >= 3 ? 1 : cameraZoom >= 2 ? 3 : 2;\n    void applyNativeZoom(next);\n  };\n\n  const onCameraTouchStart = (e: React.TouchEvent) => {\n    if (e.touches.length === 2) {\n      const dx = e.touches[0].clientX - e.touches[1].clientX;\n      const dy = e.touches[0].clientY - e.touches[1].clientY;\n      pinchStartDist.current = Math.hypot(dx, dy);\n      pinchStartZoom.current = cameraZoom;\n    }\n  };\n\n  const onCameraTouchMove = (e: React.TouchEvent) => {\n    if (e.touches.length === 2 && pinchStartDist.current) {\n      const dx = e.touches[0].clientX - e.touches[1].clientX;\n      const dy = e.touches[0].clientY - e.touches[1].clientY;\n      const dist = Math.hypot(dx, dy);\n      const scale = dist / pinchStartDist.current;\n      const next = Math.max(1, Math.min(8, pinchStartZoom.current * scale));\n      void applyNativeZoom(next);\n    }\n  };\n\n  const onCameraTouchEnd = () => {\n    pinchStartDist.current = null;\n  };\n\n  // Native camera preview lifecycle. The preview is behind the WebView so React\n  // can keep the overlay, shutter, flash and zoom controls on top.\n  useEffect(() => {\n    if (currentStep !== 'camera') return;\n    let active = true;\n\n    const startCamera = async () => {\n      try {\n        await CameraPreview.start({\n          position: 'rear',\n          toBack: true,\n          aspectMode: 'cover',\n          width: window.innerWidth,\n          height: window.innerHeight,\n          storeToFile: false,\n          disableAudio: true,\n          initialZoomLevel: 1,\n          rotateWhenOrientationChanged: true,\n        });\n        if (!active) return;\n        await CameraPreview.setFlashMode({ flashMode });\n        await CameraPreview.setZoom({ level: cameraZoom });\n      } catch (error) {\n        console.error('[Camera] Native preview failed to start:', error);\n      }\n    };\n\n    void startCamera();\n    return () => {\n      active = false;\n      void CameraPreview.stop({ force: true }).catch((error) => {\n        console.warn('[Camera] Native preview stop:', error);\n      });\n    };\n    // Start/stop must only follow the camera screen lifecycle.\n    // eslint-disable-next-line react-hooks/exhaustive-deps\n  }, [currentStep]);\n\n  useEffect(() => {\n    if (currentStep !== 'camera') return;\n    void CameraPreview.setFlashMode({ flashMode }).catch((error) => {\n      console.warn('[Camera] Flash mode rejected:', error);\n    });\n  }, [flashMode, currentStep]);\n'''
+          s = s.replace(old_camera_state, new_camera_state)
+
+          old_capture = '''      if (!webcamRef.current) {\n        setIsProcessing(false);\n        return;\n      }\n\n      const rawImage = webcamRef.current.getScreenshot();\n\n      if (!rawImage) {\n        console.error('No se pudo capturar la imagen');\n        setIsProcessing(false);\n        return;\n      }\n'''
+          if old_capture not in s:
+              raise SystemExit('Expected webcam capture block not found')
+          new_capture = '''      const captureResult = await CameraPreview.capture({\n        quality: 90,\n        format: 'jpeg',\n      });\n      const capturedValue = captureResult?.value;\n      const rawImage = capturedValue\n        ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`)\n        : null;\n\n      if (!rawImage) {\n        throw new Error('No se pudo capturar la imagen con la cámara nativa');\n      }\n'''
+          s = s.replace(old_capture, new_capture)
+
+          old_webcam = '''                  <Webcam\n                    audio={false}\n                    ref={webcamRef}\n                    screenshotFormat="image/jpeg"\n                    videoConstraints={{\n                      facingMode: { ideal: "environment" },\n                      width: { ideal: 1920 },\n                      height: { ideal: 1080 }\n                    }}\n                    className="w-full h-full object-cover camera-preview-video"\n                    onUserMedia={(stream) => {\n                      const video = webcamRef.current?.video;\n                      if (video) {\n                        video.muted = true;\n                        video.setAttribute('playsinline', 'true');\n                        video.setAttribute('webkit-playsinline', 'true');\n                        void video.play().catch(() => {});\n                      }\n                    }}\n                    onLoadedMetadata={(event) => {\n                      const video = event.currentTarget;\n                      video.muted = true;\n                      video.setAttribute('playsinline', 'true');\n                      video.setAttribute('webkit-playsinline', 'true');\n                      void video.play().catch(() => {});\n                    }}\n                  />'''
+          if old_webcam not in s:
+              raise SystemExit('Expected Webcam JSX block not found')
+          s = s.replace(old_webcam, '''                  <div className="absolute inset-0 bg-transparent pointer-events-none" aria-hidden="true" />''')
+
+          old_camera_root = 'className="absolute inset-0 bg-black z-50 flex flex-col"'
+          if old_camera_root not in s:
+              raise SystemExit('Camera root class not found')
+          s = s.replace(old_camera_root, 'className="absolute inset-0 bg-transparent z-50 flex flex-col"', 1)
+
+          old_camera_area = 'className="relative flex-1 bg-gray-950 overflow-hidden"'
+          if old_camera_area not in s:
+              raise SystemExit('Camera preview area class not found')
+          s = s.replace(old_camera_area, 'className="relative flex-1 bg-transparent overflow-hidden" onTouchStart={onCameraTouchStart} onTouchMove={onCameraTouchMove} onTouchEnd={onCameraTouchEnd}', 1)
+
+          old_flash = '''                        const next = flashMode === 'off' ? 'on' : 'off';\n                        setFlashMode(next);\n                        await applyTorch(next === 'on');'''
+          if old_flash not in s:
+              raise SystemExit('Old flash handler not found')
+          s = s.replace(old_flash, '''                        const next = flashMode === 'off' ? 'on' : 'off';\n                        setFlashMode(next);\n                        try {\n                          await CameraPreview.setFlashMode({ flashMode: next });\n                        } catch (error) {\n                          console.warn('[Camera] Flash mode rejected:', error);\n                        }''', 1)
+
+          old_back = '''onClick={() => { setCameraZoom(1); setFlashMode('off'); void applyTorch(false); setCurrentStep('history'); }}'''
+          if old_back not in s:
+              raise SystemExit('Camera back handler not found')
+          s = s.replace(old_back, "onClick={() => { setCameraZoom(1); setFlashMode('off'); setCurrentStep('history'); }}", 1)
+
+          old_root = '<div className="min-h-screen bg-white flex flex-col font-sans">'
+          if old_root not in s:
+              raise SystemExit('App root not found')
+          s = s.replace(old_root, '<div className={`min-h-screen ${currentStep === \'camera\' ? \'bg-transparent\' : \'bg-white\'} flex flex-col font-sans`}>', 1)
+
+          old_content = '<div className="flex-1 flex flex-col relative overflow-hidden">'
+          if old_content not in s:
+              raise SystemExit('Main content wrapper not found')
+          s = s.replace(old_content, '<div className={`flex-1 flex flex-col relative overflow-hidden ${currentStep === \'camera\' ? \'invisible\' : \'\'}`}>', 1)
+
+          old_thumb = '''                    onClick={() => {\n                      if (lastImage) setShowLastImage(true);\n                      void cameraService.openFieldTraceAlbum();\n                    }}'''
+          if old_thumb not in s:
+              raise SystemExit('Last-photo thumbnail handler not found')
+          s = s.replace(old_thumb, '''                    onClick={() => {\n                      void cameraService.openFieldTraceAlbum(true);\n                    }}''', 1)
+
+          app.write_text(s)
+
+          cam = Path('src/services/cameraService.ts')
+          cs = cam.read_text()
+          cs = cs.replace("import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';\n", "")
+          cs = re.sub(r"\n  async takePhoto\(\) \{.*?\n  \},\n\n  async drawOverlay", "\n  async drawOverlay", cs, flags=re.S)
+          cam.write_text(cs)
+
+          css = Path('src/index.css')
+          xs = css.read_text()
+          marker = "\n/* Native camera preview uses a transparent WebView when active. */\n"
+          if marker not in xs:
+              xs += marker + "\nhtml.native-camera-active,\nhtml.native-camera-active body,\nhtml.native-camera-active #root {\n  background: transparent !important;\n}\n"
+          css.write_text(xs)
+
+          activity = Path('android/app/src/main/java/com/fieldtrace/app/MainActivity.java')
+          java = activity.read_text()
+          java = java.replace('import android.net.Uri;\n', 'import android.net.Uri;\nimport android.content.ContentUris;\nimport android.database.Cursor;\nimport android.graphics.Color;\nimport android.provider.MediaStore;\n')
+          java = java.replace('settings.setJavaScriptEnabled(true);\n', 'settings.setJavaScriptEnabled(true);\n                webView.setBackgroundColor(Color.TRANSPARENT);\n                webView.getRootView().setBackgroundColor(Color.TRANSPARENT);\n')
+          old_open = '''                Uri uri = Uri.parse(uriString.trim());\n                Intent intent = new Intent(Intent.ACTION_VIEW);\n                intent.setDataAndType(uri, "image/*");\n                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);\n                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);\n                startActivity(intent);'''
+          if old_open not in java:
+              raise SystemExit('Expected openUri implementation not found')
+          new_open = '''                Uri uri = resolveImageContentUri(uriString.trim());\n                Intent intent = new Intent(Intent.ACTION_VIEW);\n                intent.setDataAndType(uri, "image/*");\n                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);\n                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);\n                startActivity(intent);'''
+          java = java.replace(old_open, new_open, 1)
+          insert_before = '''    @JavascriptInterface\n    public void openGallery() {'''
+          helper = '''    private Uri resolveImageContentUri(String uriString) {\n      Uri parsed = Uri.parse(uriString);\n      if ("content".equalsIgnoreCase(parsed.getScheme())) return parsed;\n\n      String path = uriString;\n      if ("file".equalsIgnoreCase(parsed.getScheme())) {\n        path = parsed.getPath();\n      }\n      if (path == null || path.trim().isEmpty()) throw new IllegalArgumentException("Empty image path");\n\n      String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DATA };\n      try (Cursor cursor = getContentResolver().query(\n          MediaStore.Images.Media.EXTERNAL_CONTENT_URI,\n          projection,\n          MediaStore.Images.Media.DATA + "=?",\n          new String[] { path },\n          null)) {\n        if (cursor != null && cursor.moveToFirst()) {\n          long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));\n          return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);\n        }\n      }\n      throw new IllegalArgumentException("Image not found in MediaStore: " + path);\n    }\n\n'''
+          if insert_before not in java:
+              raise SystemExit('openGallery marker not found')
+          java = java.replace(insert_before, helper + insert_before, 1)
+          activity.write_text(java)
+
+          print('Native camera/gallery source changes applied')
+          PY
+
+      - name: Audit source implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+
+          app = Path('src/App.tsx').read_text()
+          cam = Path('src/services/cameraService.ts').read_text()
+          css = Path('src/index.css').read_text()
+          java = Path('android/app/src/main/java/com/fieldtrace/app/MainActivity.java').read_text()
+          pkg = json.loads(Path('package.json').read_text())
+
+          checks = {
+            'native plugin dependency': '@capgo/camera-preview' in pkg['dependencies'],
+            'no react-webcam import': "import Webcam from 'react-webcam';" not in app,
+            'no getScreenshot': 'getScreenshot()' not in app,
+            'native camera start': 'CameraPreview.start' in app,
+            'native capture': 'CameraPreview.capture' in app,
+            'native flash': 'CameraPreview.setFlashMode' in app,
+            'native zoom': 'CameraPreview.setZoom' in app,
+            'overlay preserved': 'cameraService.drawOverlay(rawImage, evidenceObject)' in app,
+            'gallery save preserved': 'cameraService.saveToGallery(finalImage, fileName)' in app,
+            'Field Trace album': 'Media.savePhoto' in cam and 'Field Trace' in cam,
+            'gallery content URI bridge': 'resolveImageContentUri' in java and 'MediaStore.Images.Media' in java,
+            'system image viewer intent': 'Intent.ACTION_VIEW' in java and 'image/*' in java,
+            'webview transparency': 'Color.TRANSPARENT' in java,
+            'camera overlay transparent': 'bg-transparent z-50 flex flex-col' in app,
+            'underlying UI hidden during camera': "currentStep === 'camera' ? 'invisible'" in app,
+            'native camera CSS marker': 'native-camera-active' in css,
+          }
+          failed = [k for k,v in checks.items() if not v]
+          if failed:
+            raise SystemExit('AUDIT FAILED: ' + ', '.join(failed))
+          print('SOURCE AUDIT PASSED')
+          for k in checks:
+            print('PASS:', k)
+          PY
+
+      - name: Install dependencies and sync Capacitor (no APK)
+        run: |
+          npm install --no-audit --no-fund
+          npx cap sync android
+
+      - name: TypeScript and web build audit (no APK)
+        run: |
+          npm run lint
+          npm run build
+
+      - name: Native Android compile audit (no APK)
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew compileDebugJavaWithJavac --no-daemon
+
+      - name: Remove one-time workflow and commit repaired branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/native-camera-gallery-repair.yml
+          git add src/App.tsx src/services/cameraService.ts src/index.css android/app/src/main/java/com/fieldtrace/app/MainActivity.java package-lock.json .github/workflows/native-camera-gallery-repair.yml
+          git diff --cached --check
+          git commit -m "fix: use native camera and system gallery viewer"
+          git push origin native-camera-gallery-fix

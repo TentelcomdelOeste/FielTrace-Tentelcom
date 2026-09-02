@@ -433,6 +433,12 @@ export default function App() {
 
       const customFieldsSnapshot = selectedProject.customFields.map(f => ({ ...f }));
 
+      const viewfinderEl = document.getElementById('camera-viewfinder');
+      const vfRect = viewfinderEl ? viewfinderEl.getBoundingClientRect() : null;
+      const viewfinderMetrics = vfRect && vfRect.width > 0 && vfRect.height > 0
+        ? { width: vfRect.width, height: vfRect.height, ratio: vfRect.width / vfRect.height }
+        : { width: window.innerWidth, height: Math.max(1, window.innerHeight - 76), ratio: window.innerWidth / Math.max(1, window.innerHeight - 76) };
+
       // Objeto ÚNICO de metadatos/evidencia unificado (del cual se derivan overlay y IndexedDB)
       const evidenceObject: any = {
         uuid,
@@ -462,6 +468,7 @@ export default function App() {
         locked: true,
         syncStatus: 'pending',
         retryCount: 0,
+        viewfinder: viewfinderMetrics,
         // Propiedades auxiliares para el overlay
         projectNameOverlay: selectedProject.name,
         dateTimeFormatted: formatDateTime(selectedProject.dateTimeFormat),
@@ -478,7 +485,8 @@ export default function App() {
           logoImage: selectedProject.logoImage,
           logoPosition: selectedProject.logoPosition,
           logoSize: selectedProject.logoSize,
-          logoOpacity: selectedProject.logoOpacity
+          logoOpacity: selectedProject.logoOpacity,
+          viewfinder: viewfinderMetrics
         }
       };
 
@@ -1262,7 +1270,7 @@ export default function App() {
           className="fixed inset-0 bg-transparent z-50 flex flex-col pointer-events-auto"
         >
           {/* Real-time Camera Bridge */}
-          <div className="relative flex-1 bg-transparent overflow-hidden" onTouchStart={onCameraTouchStart} onTouchMove={onCameraTouchMove} onTouchEnd={onCameraTouchEnd}>
+          <div id="camera-viewfinder" className="relative flex-1 bg-transparent overflow-hidden" onTouchStart={onCameraTouchStart} onTouchMove={onCameraTouchMove} onTouchEnd={onCameraTouchEnd}>
             <div className="absolute inset-0 bg-transparent pointer-events-none" aria-hidden="true" />
             
             {/* Flash Feedback Layer */}

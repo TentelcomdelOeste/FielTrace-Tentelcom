@@ -95,26 +95,45 @@ export const locationService = {
     if (Capacitor.isNativePlatform()) {
       try {
         const check = await Geolocation.checkPermissions();
-        const locStatus = check?.location as string;
-        if (locStatus === 'granted' || locStatus === 'coarse') {
+        const checkLoc = check?.location as string;
+        const checkCoarse = (check as any)?.coarseLocation as string;
+        const isAlreadyGranted =
+          checkLoc === 'granted' ||
+          checkLoc === 'coarse' ||
+          checkCoarse === 'granted' ||
+          checkCoarse === 'coarse';
+
+        if (isAlreadyGranted) {
           return true;
         }
-        
+
         const request = await Geolocation.requestPermissions();
-        const reqStatus = request?.location as string;
-        if (reqStatus === 'granted' || reqStatus === 'coarse') {
+        const reqLoc = request?.location as string;
+        const reqCoarse = (request as any)?.coarseLocation as string;
+        const isRequestGranted =
+          reqLoc === 'granted' ||
+          reqLoc === 'coarse' ||
+          reqCoarse === 'granted' ||
+          reqCoarse === 'coarse';
+
+        if (isRequestGranted) {
           return true;
         }
-        
-        this.clearGps();
+
+        // Only clear cached GPS if permission is explicitly denied
+        if (reqLoc === 'denied' && (reqCoarse === 'denied' || !reqCoarse)) {
+          this.clearGps();
+        }
         return false;
       } catch (e) {
         console.warn('Error checking/requesting location permission:', e);
+        // Do not wipe cached GPS on transient permission errors
+        return true;
       }
     }
     
     // Web fallback permission check
-    if (navigator?.permissions && navigator.permissions.query) {
+    if (typeof navigator !== 'undefined' && navigator.permissions && navigator.permissions.query) {
       try {
         const p = await navigator.permissions.query({ name: 'geolocation' });
         if (p.state === 'denied') {
@@ -133,16 +152,35 @@ export const locationService = {
       try {
         const hasPermission = await this.checkAndRequestPermissions();
         if (!hasPermission) {
-          this.clearGps();
-          return null;
+          return currentGps;
         }
 
-        // 1. First try cached or fresh position from Capacitor Geolocation (high accuracy)
+        // 1. FAST PATH: Instant last-known location from Android's fused provider / cache (20-50ms)
+        try {
+          const quickCoords = await Geolocation.getCurrentPosition({
+            enableHighAccuracy: false,
+            timeout: 2500,
+            maximumAge: 300000 // 5 minutes
+          });
+          if (quickCoords?.coords?.latitude != null && quickCoords?.coords?.longitude != null) {
+            const quickGps = {
+              lat: quickCoords.coords.latitude,
+              lon: quickCoords.coords.longitude,
+              accuracy: quickCoords.coords.accuracy,
+              timestamp: quickCoords.timestamp || Date.now()
+            };
+            setGpsState(quickGps);
+          }
+        } catch (_) {
+          // Continue to high accuracy fetch
+        }
+
+        // 2. FRESH SATELLITE FIX: Request high accuracy pinpoint GPS
         try {
           const coordinates = await Geolocation.getCurrentPosition({
             enableHighAccuracy: true,
-            timeout: 5000,
-            maximumAge: 60000
+            timeout: 6000,
+            maximumAge: 5000
           });
           const gps = {
             lat: coordinates.coords.latitude,
@@ -162,12 +200,12 @@ export const locationService = {
           console.warn('High accuracy location timeout/fail, trying low accuracy...', highAccErr);
         }
 
-        // 2. Retry with low accuracy (Cell / Wi-Fi network location, works indoors)
+        // 3. RETRY WITH NETWORK PROVIDER (Cell / Wi-Fi, works indoors)
         try {
           const coordinates = await Geolocation.getCurrentPosition({
             enableHighAccuracy: false,
             timeout: 5000,
-            maximumAge: 120000
+            maximumAge: 60000
           });
           const gps = {
             lat: coordinates.coords.latitude,
@@ -187,8 +225,8 @@ export const locationService = {
           console.warn('Low accuracy location failed:', lowAccErr);
         }
 
-        // 3. Web API Fallback
-        if (navigator.geolocation) {
+        // 4. Web API Fallback
+        if (typeof navigator !== 'undefined' && navigator.geolocation) {
           return new Promise((resolve) => {
             navigator.geolocation.getCurrentPosition(
               (pos) => {
@@ -211,7 +249,7 @@ export const locationService = {
                 console.warn('navigator.geolocation failed:', err);
                 resolve(currentGps);
               },
-              { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }
+              { enableHighAccuracy: false, timeout: 4000, maximumAge: 300000 }
             );
           });
         }
@@ -228,20 +266,35 @@ export const locationService = {
     return fetchPromise;
   },
 
-  /** Returns fresh GPS or cached GPS */
-  async getFreshGps() {
+  /** Returns fresh GPS or cached GPS without stalling camera */
+  async getFreshGps(): Promise<{ lat: number; lon: number; accuracy: number; timestamp?: number } | null> {
+    if (currentGps && isFresh(currentGps)) {
+      return currentGps;
+    }
     if (fetchPromise) {
-      await fetchPromise;
+      try {
+        await Promise.race([
+          fetchPromise,
+          new Promise((r) => setTimeout(r, 1500))
+        ]);
+      } catch (_) {}
     }
     if (currentGps) return currentGps;
-    return this.getCurrentPosition();
+    try {
+      const pos = await Promise.race([
+        this.getCurrentPosition(),
+        new Promise<typeof currentGps>((r) => setTimeout(() => r(currentGps), 2000))
+      ]);
+      return pos || currentGps;
+    } catch (_) {
+      return currentGps;
+    }
   },
 
   async watchPosition(callback?: (pos: any) => void) {
     try {
       const hasPermission = await this.checkAndRequestPermissions();
       if (!hasPermission) {
-        this.clearGps();
         return null;
       }
 
@@ -249,12 +302,11 @@ export const locationService = {
       void this.getCurrentPosition();
 
       return await Geolocation.watchPosition({
-        enableHighAccuracy: false,
+        enableHighAccuracy: true,
         timeout: 10000,
-        maximumAge: 30000
+        maximumAge: 10000
       }, async (position, err) => {
-        if (err || !position) {
-          void this.getCurrentPosition();
+        if (err || !position || !position.coords) {
           return;
         }
         const gps = {

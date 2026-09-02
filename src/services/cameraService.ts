@@ -31,9 +31,13 @@ export const cameraService = {
           let targetWidth = img.width;
           let targetHeight = img.height;
 
-          // Recortar la imagen capturada para que coincida exactamente con la relación de aspecto de la pantalla (WYSIWYG)
-          // Esto replica el comportamiento de aspectMode: 'cover' (FILL_CENTER) de la cámara nativa.
-          const screenRatio = window.innerWidth / window.innerHeight;
+          // Recortar la imagen capturada para que coincida exactamente con la relación de aspecto del visor en pantalla (WYSIWYG)
+          // Esto replica el comportamiento de aspectMode: 'cover' (FILL_CENTER) de la cámara nativa dentro del área visible.
+          const vfRatio = metadata.viewfinder?.ratio
+            || (metadata.viewfinder?.width && metadata.viewfinder?.height ? metadata.viewfinder.width / metadata.viewfinder.height : null)
+            || (metadata.settings?.viewfinder?.ratio)
+            || (window.innerWidth / Math.max(1, window.innerHeight - 76));
+          const screenRatio = vfRatio && !isNaN(vfRatio) && vfRatio > 0 ? vfRatio : (window.innerWidth / window.innerHeight);
           const imageRatio = targetWidth / targetHeight;
 
           let sourceX = 0;

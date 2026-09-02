@@ -1,6 +1,7 @@
 name: Apply Complete Camera Fixes
 
 # Final source patch is committed before the APK validation workflow runs.
+# The camera component itself is included in the persisted patch.
 
 on:
   push:

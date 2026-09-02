@@ -55,8 +55,7 @@ public class MainActivity extends BridgeActivity {
         @Override
         public Bitmap getDefaultVideoPoster() {
           Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
-          Bitmap canvasBitmap = bitmap;
-          Canvas canvas = new Canvas(canvasBitmap);
+          Canvas canvas = new Canvas(bitmap);
           canvas.drawARGB(0, 0, 0, 0);
           return bitmap;
         }
@@ -101,15 +100,22 @@ public class MainActivity extends BridgeActivity {
     }
 
     private Uri queryByDisplayName(String name) {
-      String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME };
+      String[] projection = {
+          MediaStore.Images.Media._ID,
+          MediaStore.Images.Media.DISPLAY_NAME,
+          MediaStore.Images.Media.MIME_TYPE,
+          MediaStore.Images.Media.SIZE
+      };
       String sort = MediaStore.Images.Media.DATE_ADDED + " DESC";
       try (Cursor cursor = getContentResolver().query(
           MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
           projection,
-          MediaStore.Images.Media.DISPLAY_NAME + "=?",
-          new String[]{ name },
+          MediaStore.Images.Media.DISPLAY_NAME + "=? AND " + MediaStore.Images.Media.MIME_TYPE + "=?",
+          new String[]{ name, "image/jpeg" },
           sort)) {
         if (cursor != null && cursor.moveToFirst()) {
+          long size = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE));
+          if (size <= 0) return null;
           long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
           return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
         }
@@ -120,7 +126,7 @@ public class MainActivity extends BridgeActivity {
     private void scanAndOpen(String path) {
       try {
         File file = new File(path);
-        if (!file.exists() || !file.isFile()) { openGallery(); return; }
+        if (!file.exists() || !file.isFile() || file.length() <= 0) { openGallery(); return; }
         final String scanPath = file.getAbsolutePath();
         MediaScannerConnection.scanFile(
             MainActivity.this,
@@ -139,7 +145,7 @@ public class MainActivity extends BridgeActivity {
     private void openWithFileProvider(String path) {
       try {
         File file = new File(path);
-        if (!file.exists()) { openGallery(); return; }
+        if (!file.exists() || file.length() <= 0) { openGallery(); return; }
         Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", file);
         if (launchViewer(uri)) return;
       } catch (Exception ignored) {}
@@ -161,9 +167,9 @@ public class MainActivity extends BridgeActivity {
       if (uri == null || uri.getScheme() == null || !"content".equalsIgnoreCase(uri.getScheme())) return false;
       Intent intent = new Intent(Intent.ACTION_VIEW);
       intent.addCategory(Intent.CATEGORY_DEFAULT);
-      intent.setDataAndType(uri, "image/*");
+      intent.setDataAndType(uri, "image/jpeg");
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+      // Do not request persistable permission for FileProvider URIs.
       return startPreferred(intent);
     }
 
@@ -186,7 +192,7 @@ public class MainActivity extends BridgeActivity {
       if ("content".equalsIgnoreCase(parsed.getScheme())) return parsed;
       String path = "file".equalsIgnoreCase(parsed.getScheme()) ? parsed.getPath() : uriString;
       if (path == null) path = uriString;
-      String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DATA, MediaStore.Images.Media.DISPLAY_NAME };
+      String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DATA, MediaStore.Images.Media.DISPLAY_NAME, MediaStore.Images.Media.SIZE };
       try (Cursor cursor = getContentResolver().query(
           MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
           projection,
@@ -194,6 +200,8 @@ public class MainActivity extends BridgeActivity {
           new String[]{ path },
           MediaStore.Images.Media.DATE_ADDED + " DESC")) {
         if (cursor != null && cursor.moveToFirst()) {
+          long size = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE));
+          if (size <= 0) throw new IllegalArgumentException("Image has no data");
           long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
           return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
         }
@@ -206,20 +214,33 @@ public class MainActivity extends BridgeActivity {
 
     @JavascriptInterface
     public void openGallery() {
+      // Open the actual gallery application's home screen. Using ACTION_VIEW on
+      // the MediaStore collection URI can make Google Photos show a blank/broken
+      // image placeholder instead of the user's gallery.
+      for (String pkg : PREFERRED_GALLERY_PACKAGES) {
+        try {
+          Intent launch = getPackageManager().getLaunchIntentForPackage(pkg);
+          if (launch != null) {
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(launch);
+            return;
+          }
+        } catch (Exception ignored) {}
+      }
+
       Intent galleryApp = new Intent(Intent.ACTION_MAIN);
       galleryApp.addCategory(Intent.CATEGORY_APP_GALLERY);
       galleryApp.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-      if (startPreferred(galleryApp)) return;
+      try {
+        startActivity(galleryApp);
+        return;
+      } catch (Exception ignored) {}
 
       Intent viewImages = new Intent(Intent.ACTION_VIEW);
       viewImages.addCategory(Intent.CATEGORY_DEFAULT);
       viewImages.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*");
       viewImages.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-      if (startPreferred(viewImages)) return;
-
-      try { startActivity(galleryApp); } catch (Exception ignored) {
-        try { startActivity(viewImages); } catch (Exception ignoredAgain) {}
-      }
+      try { startActivity(viewImages); } catch (Exception ignored) {}
     }
   }
 }

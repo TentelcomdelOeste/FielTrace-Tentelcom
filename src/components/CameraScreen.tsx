@@ -91,7 +91,7 @@ export function CameraScreen({
         aspectMode: 'cover',
         x: 0,
         y: 0,
-        storeToFile: false,
+        storeToFile: true,
         disableAudio: true,
         initialZoomLevel: 1,
         rotateWhenOrientationChanged: true,

@@ -98,7 +98,7 @@ const EvidenceCard = memo(({ evidence }: { evidence: any }) => {
   );
 });
 
-import { CameraPreview } from '@capgo/camera-preview';
+import { CameraPreview, getBase64FromFilePath } from '@capgo/camera-preview';
 import confetti from 'canvas-confetti';
 import { motion, AnimatePresence } from 'framer-motion';
 import { storageService } from './services/storageService';
@@ -117,6 +117,7 @@ export default function App() {
   const [editingProject, setEditingProject] = useState<Partial<Project> | null>(null);
   
   const [isProcessing, setIsProcessing] = useState(false);
+  const captureBusyRef = useRef(false);
   const [unlockedSettings, setUnlockedSettings] = useState<Record<string, boolean>>({});
   const [lastImage, setLastImage] = useState<string | null>(null);
   const [showLastImage, setShowLastImage] = useState(false);
@@ -267,13 +268,24 @@ export default function App() {
   };
 
   const captureBatchPhoto = async () => {
-    if (!selectedProject || isProcessing) return;
+    if (!selectedProject || isProcessing || captureBusyRef.current) return;
+    captureBusyRef.current = true;
     setIsProcessing(true);
     
     try {
       const captureResult = await CameraPreview.capture({ quality:80, format:'jpeg', photoQualityPrioritization:'speed' });
       const capturedValue = captureResult?.value;
-      const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
+      let rawImage: string | null = null;
+      if (capturedValue) {
+        rawImage = capturedValue.startsWith('data:')
+          ? capturedValue
+          : await getBase64FromFilePath(capturedValue);
+        if (!capturedValue.startsWith('data:')) {
+          void CameraPreview.deleteFile({ path: capturedValue }).catch((error) =>
+            console.warn('[Camera] temp capture cleanup:', error)
+          );
+        }
+      }
       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
 
       const pulse = document.getElementById('camera-pulse');
@@ -283,6 +295,7 @@ export default function App() {
       }
       
       setIsProcessing(false);
+      captureBusyRef.current = false;
 
       const { gps, locationData } = locationService.getCurrentState();
       const hasGps = !!(gps && gps.lat != null && gps.lon != null);
@@ -365,6 +378,7 @@ export default function App() {
 
     } catch (e: any) {
       console.error('Batch capture error', e);
+      captureBusyRef.current = false;
       setIsProcessing(false);
     }
   };

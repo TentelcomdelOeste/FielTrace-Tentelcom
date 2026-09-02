@@ -6,19 +6,46 @@
 import { Geolocation } from '@capacitor/geolocation';
 import { Capacitor } from '@capacitor/core';
 
-let currentGps: { lat: number; lon: number; accuracy: number; timestamp?: number } | null = null;
-let currentLocationData: any = null;
+let currentGps: { lat: number; lon: number; accuracy: number; timestamp?: number } | null = (() => {
+  try {
+    const data = localStorage.getItem('fieldtrace_last_gps');
+    if (data) {
+      const parsed = JSON.parse(data);
+      if (parsed && typeof parsed.lat === 'number' && typeof parsed.lon === 'number') {
+        return parsed;
+      }
+    }
+  } catch (_) {}
+  return null;
+})();
+
+let currentLocationData: any = (() => {
+  try {
+    const data = localStorage.getItem('fieldtrace_last_loc_data');
+    if (data) return JSON.parse(data);
+  } catch (_) {}
+  return null;
+})();
+
 let lastGeocodeLat = 0;
 let lastGeocodeLon = 0;
 let lastGeocodeTime = 0;
 
-/** GPS older than this is treated as stale and shown as SIN GPS (5 minutes) */
-const GPS_FRESH_MS = 300_000;
+/** GPS older than this is treated as stale (30 minutes) */
+const GPS_FRESH_MS = 1800_000;
 
 const subscribers = new Set<() => void>();
 
 function notifySubscribers() {
   subscribers.forEach(cb => cb());
+}
+
+function setGpsState(gps: { lat: number; lon: number; accuracy: number; timestamp?: number }) {
+  currentGps = gps;
+  try {
+    localStorage.setItem('fieldtrace_last_gps', JSON.stringify(gps));
+  } catch (_) {}
+  notifySubscribers();
 }
 
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
@@ -34,7 +61,8 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
 }
 
 function isFresh(gps: typeof currentGps): boolean {
-  if (!gps || gps.timestamp == null) return false;
+  if (!gps) return false;
+  if (gps.timestamp == null) return true;
   return Date.now() - gps.timestamp < GPS_FRESH_MS;
 }
 
@@ -45,11 +73,9 @@ export const locationService = {
   },
 
   getCurrentState() {
-    // Only expose GPS if it is still fresh; otherwise UI/overlay show SIN GPS
-    const gps = isFresh(currentGps) ? currentGps : null;
     return {
-      gps,
-      locationData: gps ? currentLocationData : null
+      gps: currentGps,
+      locationData: currentLocationData
     };
   },
 
@@ -57,6 +83,10 @@ export const locationService = {
   clearGps() {
     currentGps = null;
     currentLocationData = null;
+    try {
+      localStorage.removeItem('fieldtrace_last_gps');
+      localStorage.removeItem('fieldtrace_last_loc_data');
+    } catch (_) {}
     notifySubscribers();
   },
 
@@ -103,11 +133,12 @@ export const locationService = {
         return null;
       }
 
-      // 1. First try high accuracy GPS
+      // 1. First try cached or fresh position from Capacitor Geolocation (high accuracy)
       try {
         const coordinates = await Geolocation.getCurrentPosition({
           enableHighAccuracy: true,
-          timeout: 4000
+          timeout: 5000,
+          maximumAge: 60000
         });
         const gps = {
           lat: coordinates.coords.latitude,
@@ -115,8 +146,7 @@ export const locationService = {
           accuracy: coordinates.coords.accuracy,
           timestamp: coordinates.timestamp || Date.now()
         };
-        currentGps = gps;
-        notifySubscribers();
+        setGpsState(gps);
         if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
           lastGeocodeLat = gps.lat;
           lastGeocodeLon = gps.lon;
@@ -132,7 +162,8 @@ export const locationService = {
       try {
         const coordinates = await Geolocation.getCurrentPosition({
           enableHighAccuracy: false,
-          timeout: 4000
+          timeout: 5000,
+          maximumAge: 120000
         });
         const gps = {
           lat: coordinates.coords.latitude,
@@ -140,8 +171,7 @@ export const locationService = {
           accuracy: coordinates.coords.accuracy,
           timestamp: coordinates.timestamp || Date.now()
         };
-        currentGps = gps;
-        notifySubscribers();
+        setGpsState(gps);
         if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
           lastGeocodeLat = gps.lat;
           lastGeocodeLon = gps.lon;
@@ -164,8 +194,7 @@ export const locationService = {
                 accuracy: pos.coords.accuracy,
                 timestamp: pos.timestamp || Date.now()
               };
-              currentGps = gps;
-              notifySubscribers();
+              setGpsState(gps);
               if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
                 lastGeocodeLat = gps.lat;
                 lastGeocodeLon = gps.lon;
@@ -178,7 +207,7 @@ export const locationService = {
               console.warn('navigator.geolocation failed:', err);
               resolve(currentGps);
             },
-            { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
+            { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }
           );
         });
       }
@@ -190,9 +219,9 @@ export const locationService = {
     }
   },
 
-  /** Returns fresh GPS or null (never stale coordinates) */
+  /** Returns fresh GPS or cached GPS */
   async getFreshGps() {
-    if (isFresh(currentGps)) return currentGps;
+    if (currentGps) return currentGps;
     return this.getCurrentPosition();
   },
 
@@ -208,12 +237,11 @@ export const locationService = {
       void this.getCurrentPosition();
 
       return await Geolocation.watchPosition({
-        enableHighAccuracy: true,
+        enableHighAccuracy: false,
         timeout: 10000,
-        maximumAge: 10000
+        maximumAge: 30000
       }, async (position, err) => {
         if (err || !position) {
-          // Attempt low accuracy position check on watch error
           void this.getCurrentPosition();
           return;
         }
@@ -223,10 +251,9 @@ export const locationService = {
           accuracy: position.coords.accuracy,
           timestamp: position.timestamp || Date.now()
         };
-        currentGps = gps;
+        setGpsState(gps);
 
         if (callback) callback(gps);
-        notifySubscribers();
 
         if (navigator.onLine) {
           const now = Date.now();

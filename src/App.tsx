@@ -237,7 +237,7 @@ export default function App() {
     // Request fresh location fix immediately when opening camera
     void locationService.getCurrentPosition();
     (async () => { try {
-      await CameraPreview.start({ position:'rear', toBack:true, aspectMode:'cover', width: window.screen.width || window.innerWidth, height: window.screen.height || window.innerHeight, storeToFile:false, disableAudio:true, initialZoomLevel:1, rotateWhenOrientationChanged:true });
+      await CameraPreview.start({ position:'rear', toBack:true, aspectMode:'cover', storeToFile:false, disableAudio:true, initialZoomLevel:1, rotateWhenOrientationChanged:true });
       if (!active) return;
       await CameraPreview.setFlashMode({ flashMode });
       await CameraPreview.setZoom({ level: cameraZoom });

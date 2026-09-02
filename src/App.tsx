@@ -32,7 +32,10 @@ import {
   ArrowUpRight,
   Lock,
   Unlock,
-  Pencil
+  Pencil,
+  Zap,
+  ZapOff,
+  ZoomIn
 } from 'lucide-react';
 import { AutoResizingTextarea } from './components/AutoResizingTextarea';
 import { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
@@ -207,6 +210,10 @@ export default function App() {
   const [editingEvidence, setEditingEvidence] = useState<any | null>(null);
   const [editConfirmOpen, setEditConfirmOpen] = useState(false);
   const [pendingEditSave, setPendingEditSave] = useState<any | null>(null);
+  const [cameraZoom, setCameraZoom] = useState(1);
+  const [flashMode, setFlashMode] = useState<'off' | 'on'>('off');
+  const pinchStartDist = useRef<number | null>(null);
+  const pinchStartZoom = useRef(1);
 
   const reversedEvidences = useMemo(() => [...evidences].reverse(), [evidences]);
 
@@ -216,6 +223,50 @@ export default function App() {
   const [filterField, setFilterField] = useState<string>("");
 
   const webcamRef = useRef<Webcam>(null);
+
+  const applyTorch = async (on: boolean) => {
+    try {
+      const video = webcamRef.current?.video as HTMLVideoElement | undefined;
+      const stream = video?.srcObject as MediaStream | null;
+      const track = stream?.getVideoTracks?.()[0];
+      if (!track) return;
+      const caps = track.getCapabilities?.() as any;
+      if (caps && 'torch' in caps) {
+        await track.applyConstraints({ advanced: [{ torch: on } as any] });
+      }
+    } catch (e) {
+      console.warn('Torch not supported', e);
+    }
+  };
+
+  const cycleZoom = () => {
+    setCameraZoom((z) => (z >= 3 ? 1 : z >= 2 ? 3 : 2));
+  };
+
+  const onCameraTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchStartDist.current = Math.hypot(dx, dy);
+      pinchStartZoom.current = cameraZoom;
+    }
+  };
+
+  const onCameraTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && pinchStartDist.current) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const scale = dist / pinchStartDist.current;
+      let next = pinchStartZoom.current * scale;
+      next = Math.max(1, Math.min(4, next));
+      setCameraZoom(Math.round(next * 10) / 10);
+    }
+  };
+
+  const onCameraTouchEnd = () => {
+    pinchStartDist.current = null;
+  };
 
   // Force play when entering camera (Android WebView)
   useEffect(() => {
@@ -723,6 +774,7 @@ export default function App() {
                       height: { ideal: 1080 }
                     }}
                     className="w-full h-full object-cover camera-preview-video"
+                    style={{ transform: `scale(${cameraZoom})`, transformOrigin: 'center center' }}
                     mirrored={false}
                     forceScreenshotSourceSize={true}
                     imageSmoothing={true}
@@ -836,11 +888,36 @@ export default function App() {
                   >
                     <Settings className="w-5 h-5 pointer-events-none" />
                   </motion.button>
+
+                  {/* Flash + Zoom controls */}
+                  <div className="absolute top-6 right-6 z-50 flex flex-col gap-2 items-end">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const next = flashMode === 'off' ? 'on' : 'off';
+                        setFlashMode(next);
+                        await applyTorch(next === 'on');
+                      }}
+                      className="w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white active:scale-95"
+                      title="Flash"
+                    >
+                      {flashMode === 'on' ? <Zap className="w-5 h-5 text-yellow-300" /> : <ZapOff className="w-5 h-5" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={cycleZoom}
+                      className="min-w-10 h-10 px-2 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white text-[11px] font-black active:scale-95 gap-1"
+                      title="Zoom"
+                    >
+                      <ZoomIn className="w-4 h-4" />
+                      {cameraZoom % 1 === 0 ? `${cameraZoom}x` : `${cameraZoom.toFixed(1)}x`}
+                    </button>
+                  </div>
                 </div>
 
                 {/* Shutter Bar */}
                 <div className="h-[120px] bg-black flex items-center justify-between px-8 shrink-0">
-                  <button onClick={() => setCurrentStep('history')} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
+                  <button onClick={() => { setCameraZoom(1); setFlashMode('off'); void applyTorch(false); setCurrentStep('history'); }} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
                     <ArrowLeft className="w-6 h-6"/>
                   </button>
                   
@@ -855,11 +932,15 @@ export default function App() {
                   </button>
 
                   <button 
-                    onClick={() => { void cameraService.openFieldTraceAlbum(); }} 
-                    className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white"
+                    type="button"
+                    onClick={() => {
+                      if (lastImage) setShowLastImage(true);
+                      void cameraService.openFieldTraceAlbum();
+                    }} 
+                    className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95"
                   >
                     {lastImage ? (
-                      <img src={lastImage} className="w-full h-full object-contain" />
+                      <img src={lastImage} className="w-full h-full object-cover" alt="Ultima foto" />
                     ) : (
                       <History className="w-7 h-7 opacity-40"/>
                     )}
@@ -1439,9 +1520,15 @@ export default function App() {
               >
                 <X className="w-6 h-6" />
               </button>
-              <div className="absolute bottom-6 left-8 right-8 text-center pointer-events-none">
-                 <p className="text-[10px] text-white/50 font-black uppercase tracking-widest mb-1 shadow-sm">Evidencia Capturada</p>
-                 <p className="text-[12px] text-white font-black uppercase tracking-tighter shadow-sm">Vista Rápida Pre-Sincronización</p>
+              <div className="absolute bottom-6 left-6 right-6 text-center pointer-events-auto space-y-3">
+                 <p className="text-[10px] text-white/50 font-black uppercase tracking-widest shadow-sm">Ultima foto capturada</p>
+                 <button
+                   type="button"
+                   onClick={() => { void cameraService.openFieldTraceAlbum(); }}
+                   className="w-full py-3.5 bg-white text-black rounded-2xl text-xs font-black uppercase tracking-widest active:scale-95"
+                 >
+                   Abrir galeria / album Field Trace
+                 </button>
               </div>
             </motion.div>
           </motion.div>

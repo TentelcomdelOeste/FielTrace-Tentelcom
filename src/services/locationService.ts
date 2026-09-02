@@ -10,7 +10,6 @@ export type GpsSource = 'live' | 'cache' | 'none';
 export type GpsStatus = 'idle' | 'acquiring' | 'ready' | 'permission_denied' | 'location_disabled' | 'error';
 export type GpsErrorCode = 
   | 'PERMISSION_DENIED'
-  | 'PERMISSION_NOT_DECLARED'
   | 'LOCATION_DISABLED'
   | 'TIMEOUT'
   | 'PROVIDER_ERROR'
@@ -27,8 +26,6 @@ export interface GpsCoordinate {
   speed?: number | null;
   heading?: number | null;
 }
-
-export type LastKnownLocation = GpsCoordinate;
 
 export interface GpsDiagnostic {
   status: GpsStatus;
@@ -65,10 +62,6 @@ let cachedGps: GpsCoordinate | null = (() => {
   } catch (_) {}
   return null;
 })();
-
-let lastKnownLocation: GpsCoordinate | null = cachedGps;
-const locationHistoryBuffer: GpsCoordinate[] = cachedGps ? [cachedGps] : [];
-const BUFFER_MAX_SIZE = 25;
 
 let currentLocationData: any = (() => {
   try {
@@ -129,11 +122,6 @@ function updateLiveGps(coords: {
 
   liveGps = fix;
   cachedGps = { ...fix, source: 'cache' };
-  lastKnownLocation = fix;
-  locationHistoryBuffer.push(fix);
-  if (locationHistoryBuffer.length > BUFFER_MAX_SIZE) {
-    locationHistoryBuffer.shift();
-  }
 
   diagnostic.status = 'ready';
   diagnostic.source = 'live';
@@ -173,21 +161,7 @@ function classifyError(error: any): { code: GpsErrorCode; message: string; nativ
   const rawMsg = String(error?.message || error || '');
   const errCode = String(error?.code || '');
 
-  // Capacitor Geolocation: permissions missing from the FINAL APK manifest
-  if (
-    errCode === 'OS-PLUG-GLOC-0018' ||
-    msg.includes('not declared in manifest') ||
-    msg.includes('permissions are not declared') ||
-    msg.includes('missing the following permissions')
-  ) {
-    return {
-      code: 'PERMISSION_NOT_DECLARED',
-      message: 'Permiso de ubicación no declarado en el APK (AndroidManifest)',
-      nativeMsg: rawMsg
-    };
-  }
-
-  if (errCode === 'OS-PLUG-GLOC-0007' || msg.includes('location services are not enabled') || (msg.includes('disabled') && msg.includes('location'))) {
+  if (errCode === 'OS-PLUG-GLOC-0007' || msg.includes('location services are not enabled') || msg.includes('disabled')) {
     return {
       code: 'LOCATION_DISABLED',
       message: 'Ubicación desactivada en el teléfono',
@@ -203,7 +177,7 @@ function classifyError(error: any): { code: GpsErrorCode; message: string; nativ
     };
   }
 
-  if (errCode === 'OS-PLUG-GLOC-0010' || msg.includes('timeout') || msg.includes('time out') || msg.includes('timed out')) {
+  if (errCode === 'OS-PLUG-GLOC-0010' || msg.includes('timeout') || msg.includes('time')) {
     return {
       code: 'TIMEOUT',
       message: 'Tiempo de espera de GPS agotado (buscando satélites)',
@@ -246,48 +220,12 @@ export const locationService = {
     };
   },
 
-  /**
-   * Obtiene la última ubicación válida disponible de forma 100% síncrona en memoria (0ms).
-   * Si se pasa targetTimestamp, selecciona la ubicación del buffer más cercana en el tiempo
-   * al instante exacto de la captura fotográfica.
-   * NUNCA bloquea el obturador ni espera adquisición satelital.
-   */
-  getLastKnownLocation(targetTimestamp?: number): GpsCoordinate | null {
-    if (targetTimestamp && locationHistoryBuffer.length > 0) {
-      let closest = locationHistoryBuffer[0];
-      let minDiff = Math.abs(closest.timestamp - targetTimestamp);
-      for (let i = 1; i < locationHistoryBuffer.length; i++) {
-        const item = locationHistoryBuffer[i];
-        const diff = Math.abs(item.timestamp - targetTimestamp);
-        if (diff < minDiff) {
-          minDiff = diff;
-          closest = item;
-        }
-      }
-      return closest;
-    }
-
-    if (lastKnownLocation) return lastKnownLocation;
-    if (liveGps) return liveGps;
-    if (cachedGps) return cachedGps;
-    return null;
-  },
-
-  /**
-   * Obtiene los datos de dirección en memoria de forma 100% síncrona (0ms).
-   * La geocodificación ocurre en segundo plano sin bloquear la captura.
-   */
-  getCurrentAddress(): any {
-    return currentLocationData;
-  },
-
   getCurrentState() {
     const isLive = !!(liveGps && (Date.now() - liveGps.timestamp < GPS_FRESH_THRESHOLD_MS));
-    const activeGps = isLive ? liveGps : (lastKnownLocation || liveGps || cachedGps);
+    const activeGps = isLive ? liveGps : (liveGps || cachedGps);
 
     return {
       gps: activeGps,
-      lastKnownLocation: this.getLastKnownLocation(),
       liveGps,
       cachedGps,
       isLive,
@@ -303,8 +241,6 @@ export const locationService = {
   clearGps() {
     liveGps = null;
     cachedGps = null;
-    lastKnownLocation = null;
-    locationHistoryBuffer.length = 0;
     currentLocationData = null;
     diagnostic.status = 'idle';
     diagnostic.source = 'none';
@@ -367,7 +303,7 @@ export const locationService = {
 
         diagnostic.permissionGranted = false;
         diagnostic.status = 'permission_denied';
-        diagnostic.lastError = 'Permisos de ubicación denegados por el usuario';
+        diagnostic.lastError = 'Permisos de ubicación denegados';
         diagnostic.lastErrorCode = 'PERMISSION_DENIED';
         notifySubscribers();
         return false;
@@ -379,15 +315,8 @@ export const locationService = {
         if (classified.code === 'LOCATION_DISABLED') {
           diagnostic.locationServicesEnabled = false;
           diagnostic.status = 'location_disabled';
-        } else if (classified.code === 'PERMISSION_NOT_DECLARED') {
-          diagnostic.permissionGranted = false;
-          diagnostic.status = 'permission_denied';
-          diagnostic.lastError = classified.message;
-        } else if (classified.code === 'PERMISSION_DENIED') {
-          diagnostic.permissionGranted = false;
-          diagnostic.status = 'permission_denied';
         }
-        console.warn('[GPS] Permission error:', classified.code, e);
+        console.warn('[GPS] Permission error:', e);
         notifySubscribers();
         return false;
       }
@@ -541,11 +470,54 @@ export const locationService = {
 
   /**
    * getFreshGps():
-   * Devuelve de inmediato la última ubicación válida disponible sin bloquear el obturador.
-   * La captura fotográfica nunca espera adquisiciones satelitales ni bloquea el proceso.
+   * Distingue inequívocamente entre:
+   * - Posición FRESCA (live < 20s): Devuelve inmediatamente con source='live'
+   * - Adquisición en curso o nueva adquisición rápida (timeout controlado 3.5s)
+   * - Posición en CACHÉ (fallback si la adquisición fresca falla)
+   * - SIN GPS (si no hay ni fresca ni en caché)
    */
   async getFreshGps(): Promise<GpsCoordinate | null> {
-    return this.getLastKnownLocation();
+    const isLive = !!(liveGps && (Date.now() - liveGps.timestamp < GPS_FRESH_THRESHOLD_MS));
+    if (isLive && liveGps) {
+      console.log('[GPS] getFreshGps: Usando fix fresco existente (<30s)');
+      return liveGps;
+    }
+
+    console.log('[GPS] getFreshGps: Adquiriendo coordenada fresca antes del disparo...');
+
+    // Si ya había una adquisición en progreso, esperarla con un límite seguro
+    if (activeFetchPromise) {
+      try {
+        const res = await Promise.race([
+          activeFetchPromise,
+          new Promise<null>((r) => setTimeout(() => r(null), 2500))
+        ]);
+        if (res && res.source === 'live') return res;
+      } catch (_) {}
+    }
+
+    // Disparar adquisición con límite de tiempo para no bloquear el obturador
+    try {
+      const freshFix = await Promise.race([
+        this.getCurrentPosition(),
+        new Promise<null>((r) => setTimeout(() => r(null), 3000))
+      ]);
+
+      if (freshFix && freshFix.source === 'live') {
+        return freshFix;
+      }
+    } catch (e) {
+      console.warn('[GPS] getFreshGps: Falló adquisición fresca:', e);
+    }
+
+    // Fallback: Si no se logró fix fresco pero hay caché previa en localStorage
+    if (liveGps) return liveGps;
+    if (cachedGps) {
+      console.warn('[GPS] getFreshGps: Fallback a coordenadas almacenadas en caché');
+      return cachedGps;
+    }
+
+    return null;
   },
 
   /**

@@ -12,8 +12,8 @@ let lastGeocodeLat = 0;
 let lastGeocodeLon = 0;
 let lastGeocodeTime = 0;
 
-/** GPS older than this is treated as stale and shown as SIN GPS */
-const GPS_FRESH_MS = 90_000;
+/** GPS older than this is treated as stale and shown as SIN GPS (5 minutes) */
+const GPS_FRESH_MS = 300_000;
 
 const subscribers = new Set<() => void>();
 
@@ -64,18 +64,33 @@ export const locationService = {
     if (Capacitor.isNativePlatform()) {
       try {
         const check = await Geolocation.checkPermissions();
-        if (check.location !== 'granted') {
-          const request = await Geolocation.requestPermissions();
-          if (request.location !== 'granted') {
-            this.clearGps();
-            return false;
-          }
+        const locStatus = check?.location as string;
+        if (locStatus === 'granted' || locStatus === 'coarse') {
+          return true;
         }
-      } catch (e) {
-        console.warn('Error checking/requesting location permission:', e);
+        
+        const request = await Geolocation.requestPermissions();
+        const reqStatus = request?.location as string;
+        if (reqStatus === 'granted' || reqStatus === 'coarse') {
+          return true;
+        }
+        
         this.clearGps();
         return false;
+      } catch (e) {
+        console.warn('Error checking/requesting location permission:', e);
       }
+    }
+    
+    // Web fallback permission check
+    if (navigator?.permissions && navigator.permissions.query) {
+      try {
+        const p = await navigator.permissions.query({ name: 'geolocation' });
+        if (p.state === 'denied') {
+          this.clearGps();
+          return false;
+        }
+      } catch (_) {}
     }
     return true;
   },
@@ -88,23 +103,90 @@ export const locationService = {
         return null;
       }
 
-      const coordinates = await Geolocation.getCurrentPosition({
-        enableHighAccuracy: true,
-        timeout: 10000
-      });
-      const gps = {
-        lat: coordinates.coords.latitude,
-        lon: coordinates.coords.longitude,
-        accuracy: coordinates.coords.accuracy,
-        timestamp: coordinates.timestamp || Date.now()
-      };
-      currentGps = gps;
-      notifySubscribers();
-      return gps;
+      // 1. First try high accuracy GPS
+      try {
+        const coordinates = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: true,
+          timeout: 4000
+        });
+        const gps = {
+          lat: coordinates.coords.latitude,
+          lon: coordinates.coords.longitude,
+          accuracy: coordinates.coords.accuracy,
+          timestamp: coordinates.timestamp || Date.now()
+        };
+        currentGps = gps;
+        notifySubscribers();
+        if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
+          lastGeocodeLat = gps.lat;
+          lastGeocodeLon = gps.lon;
+          lastGeocodeTime = Date.now();
+          this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+        }
+        return gps;
+      } catch (highAccErr) {
+        console.warn('High accuracy location timeout/fail, trying low accuracy...', highAccErr);
+      }
+
+      // 2. Retry with low accuracy (Cell / Wi-Fi network location, works indoors)
+      try {
+        const coordinates = await Geolocation.getCurrentPosition({
+          enableHighAccuracy: false,
+          timeout: 4000
+        });
+        const gps = {
+          lat: coordinates.coords.latitude,
+          lon: coordinates.coords.longitude,
+          accuracy: coordinates.coords.accuracy,
+          timestamp: coordinates.timestamp || Date.now()
+        };
+        currentGps = gps;
+        notifySubscribers();
+        if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
+          lastGeocodeLat = gps.lat;
+          lastGeocodeLon = gps.lon;
+          lastGeocodeTime = Date.now();
+          this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+        }
+        return gps;
+      } catch (lowAccErr) {
+        console.warn('Low accuracy location failed:', lowAccErr);
+      }
+
+      // 3. Web API Fallback
+      if (navigator.geolocation) {
+        return new Promise((resolve) => {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              const gps = {
+                lat: pos.coords.latitude,
+                lon: pos.coords.longitude,
+                accuracy: pos.coords.accuracy,
+                timestamp: pos.timestamp || Date.now()
+              };
+              currentGps = gps;
+              notifySubscribers();
+              if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
+                lastGeocodeLat = gps.lat;
+                lastGeocodeLon = gps.lon;
+                lastGeocodeTime = Date.now();
+                this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+              }
+              resolve(gps);
+            },
+            (err) => {
+              console.warn('navigator.geolocation failed:', err);
+              resolve(currentGps);
+            },
+            { enableHighAccuracy: false, timeout: 5000, maximumAge: 30000 }
+          );
+        });
+      }
+
+      return currentGps;
     } catch (error) {
       console.error('Error getting location', error);
-      this.clearGps();
-      return null;
+      return currentGps;
     }
   },
 
@@ -122,14 +204,17 @@ export const locationService = {
         return null;
       }
 
+      // Trigger immediate initial fix
+      void this.getCurrentPosition();
+
       return await Geolocation.watchPosition({
         enableHighAccuracy: true,
         timeout: 10000,
-        maximumAge: 5000
+        maximumAge: 10000
       }, async (position, err) => {
         if (err || !position) {
-          // Location turned off or error → clear so overlay shows SIN GPS
-          this.clearGps();
+          // Attempt low accuracy position check on watch error
+          void this.getCurrentPosition();
           return;
         }
         const gps = {
@@ -159,7 +244,7 @@ export const locationService = {
       });
     } catch (e) {
       console.warn('Could not start watchPosition:', e);
-      this.clearGps();
+      void this.getCurrentPosition();
       return null;
     }
   },

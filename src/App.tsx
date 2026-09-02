@@ -234,6 +234,8 @@ export default function App() {
   useEffect(() => {
     if (currentStep !== 'camera') return;
     let active=true;
+    // Request fresh location fix immediately when opening camera
+    void locationService.getCurrentPosition();
     (async () => { try {
       await CameraPreview.start({ position:'rear', toBack:true, aspectMode:'cover', width: window.screen.width || window.innerWidth, height: window.screen.height || window.innerHeight, storeToFile:false, disableAudio:true, initialZoomLevel:1, rotateWhenOrientationChanged:true });
       if (!active) return;
@@ -253,6 +255,9 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+    void locationService.checkAndRequestPermissions().then(() => {
+      void locationService.getCurrentPosition();
+    });
     const watchPromise = locationService.watchPosition();
     return () => {
       watchPromise.then(id => {
@@ -392,20 +397,21 @@ export default function App() {
     if (!selectedProject || isProcessing) return;
     setIsProcessing(true);
     
+    // Feedback visual rápido INMEDIATO al presionar
+    const pulse = document.getElementById('camera-pulse');
+    if (pulse) {
+      pulse.classList.add('bg-white/60');
+      setTimeout(() => pulse.classList.remove('bg-white/60'), 120);
+    }
+
     try {
-      const captureResult = await CameraPreview.capture({ quality:85, format:'jpeg' });
+      // Captura optimizada a 1920x1440 max / calidad 80 para puente nativo ultra-rápido (<150ms)
+      const captureResult = await CameraPreview.capture({ width: 1920, quality: 80, format: 'jpeg' });
       const capturedValue = captureResult?.value;
       const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
 
-      // Feedback visual rápido INMEDIATO
-      const pulse = document.getElementById('camera-pulse');
-      if (pulse) {
-        pulse.classList.add('bg-white/60');
-        setTimeout(() => pulse.classList.remove('bg-white/60'), 150);
-      }
-      
-      // Liberar cámara instantáneamente para siguiente ráfaga
+      // Liberar obturador instantáneamente
       setIsProcessing(false);
 
       const { gps, locationData } = locationService.getCurrentState();
@@ -1361,7 +1367,7 @@ export default function App() {
           </div>
 
           {/* Shutter Bar */}
-          <div className="h-[120px] bg-black flex items-center justify-between px-8 shrink-0">
+          <div className="h-[76px] py-1.5 px-8 bg-black flex items-center justify-between shrink-0 border-t border-white/10">
             <button onClick={() => { setCameraZoom(1); setFlashMode('off'); setCurrentStep('history'); }} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
               <ArrowLeft className="w-6 h-6"/>
             </button>

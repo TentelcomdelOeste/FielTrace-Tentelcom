@@ -20,6 +20,8 @@
 
 /*
  * Hide ALL native video controls / play overlay on Android WebView.
+ * Combined with MainActivity setMediaPlaybackRequiresUserGesture(false)
+ * + transparent getDefaultVideoPoster().
  */
 video::-webkit-media-controls,
 video::-webkit-media-controls-enclosure,
@@ -50,6 +52,7 @@ video {
   outline: none !important;
   background: #000 !important;
   object-fit: cover !important;
+  /* evita que el poster nativo se vea */
   -webkit-appearance: none !important;
 }
 
@@ -62,6 +65,7 @@ video {
   -webkit-appearance: none !important;
 }
 
+/* Cualquier overlay de play que el WebView inyecte */
 .camera-preview-video::before,
 .camera-preview-video::after {
   display: none !important;
@@ -84,6 +88,7 @@ video {
   @apply text-[9px] text-gray-400 uppercase font-bold block mb-1 tracking-wider;
 }
 
+
 /* Native camera (toBack): WebView must be fully transparent so preview shows behind React UI */
 html.native-camera-active,
 html.native-camera-active body,
@@ -98,7 +103,14 @@ html.native-camera-active #root {
   overflow: hidden !important;
 }
 
+/* Force transparent ancestors while camera is open */
 html.native-camera-active .min-h-screen {
   background: transparent !important;
   background-color: transparent !important;
+}
+
+/* Extra safety: hide residual white UI under native preview (Android WebView) */
+html.native-camera-active .min-h-screen > div:not(.fixed) {
+  visibility: hidden !important;
+  pointer-events: none !important;
 }

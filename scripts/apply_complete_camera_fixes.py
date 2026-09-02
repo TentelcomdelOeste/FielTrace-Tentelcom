@@ -19,4 +19,15 @@ elif new_gallery not in app:
     raise SystemExit('Gallery handler pattern not found')
 
 app_path.write_text(app)
+
+camera_path = Path('src/components/CameraScreen.tsx')
+camera = camera_path.read_text()
+camera = camera.replace(
+    "import { useEffect, useRef, useState } from 'react';",
+    "import { useEffect, useRef, useState, type PointerEvent } from 'react';",
+    1,
+)
+camera = camera.replace('React.PointerEvent<HTMLButtonElement>', 'PointerEvent<HTMLButtonElement>')
+camera_path.write_text(camera)
+
 print('Complete camera UX patch applied successfully.')

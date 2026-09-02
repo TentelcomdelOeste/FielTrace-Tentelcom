@@ -271,7 +271,7 @@ export default function App() {
     setIsProcessing(true);
     
     try {
-      const captureResult = await CameraPreview.capture({ quality:90, format:'jpeg' });
+      const captureResult = await CameraPreview.capture({ quality:80, format:'jpeg', photoQualityPrioritization:'speed' });
       const capturedValue = captureResult?.value;
       const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
@@ -442,7 +442,7 @@ export default function App() {
           lastImage={lastImage}
           onCapture={captureBatchPhoto}
           onClose={() => setCurrentStep('history')}
-          onOpenGallery={() => { void cameraService.openFieldTraceAlbum(true); }}
+          onOpenGallery={() => { void cameraService.openFieldTraceAlbum(false); }}
           onOpenQuickConfig={() => setShowQuickConfig(true)}
         />
       )}

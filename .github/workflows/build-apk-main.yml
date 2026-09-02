@@ -17,6 +17,11 @@ jobs:
       - name: Checkout current main
         uses: actions/checkout@v4
 
+      - name: Apply gallery/zoom/flash App.tsx patches
+        shell: bash
+        run: |
+          python3 scripts/patch_gallery_zoom_flash.py || true
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -154,26 +159,52 @@ jobs:
 
             public class FieldTraceBridge {
               @JavascriptInterface
+              public void openUri(String uriString) {
+                if (uriString == null || uriString.trim().isEmpty()) {
+                  openGallery();
+                  return;
+                }
+                try {
+                  Uri uri = Uri.parse(uriString.trim());
+                  Intent intent = new Intent(Intent.ACTION_VIEW);
+                  intent.setDataAndType(uri, "image/*");
+                  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                  startActivity(intent);
+                } catch (Exception e1) {
+                  try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriString.trim()));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivity(intent);
+                  } catch (Exception e2) {
+                    openGallery();
+                  }
+                }
+              }
+
+              @JavascriptInterface
               public void openGallery() {
                 try {
                   Intent intent = new Intent(Intent.ACTION_VIEW);
                   intent.setDataAndType(Uri.parse("content://media/external/images/media"), "image/*");
                   intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                   startActivity(intent);
-                } catch (Exception e1) {
-                  try {
-                    Intent intent = new Intent(Intent.ACTION_MAIN);
-                    intent.addCategory(Intent.CATEGORY_APP_GALLERY);
-                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(intent);
-                  } catch (Exception e2) {
-                    try {
-                      Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("content://media/external/images/media"));
-                      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                      startActivity(intent);
-                    } catch (Exception ignored) {}
-                  }
-                }
+                  return;
+                } catch (Exception ignored) {}
+                try {
+                  Intent intent = new Intent(Intent.ACTION_MAIN);
+                  intent.addCategory(Intent.CATEGORY_APP_GALLERY);
+                  intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  startActivity(intent);
+                  return;
+                } catch (Exception ignored) {}
+                try {
+                  Intent intent = new Intent(Intent.ACTION_VIEW);
+                  intent.setType("image/*");
+                  intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  startActivity(intent);
+                } catch (Exception ignored) {}
               }
             }
           }
@@ -282,26 +313,52 @@ jobs:
 
             public class FieldTraceBridge {
               @JavascriptInterface
+              public void openUri(String uriString) {
+                if (uriString == null || uriString.trim().isEmpty()) {
+                  openGallery();
+                  return;
+                }
+                try {
+                  Uri uri = Uri.parse(uriString.trim());
+                  Intent intent = new Intent(Intent.ACTION_VIEW);
+                  intent.setDataAndType(uri, "image/*");
+                  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                  startActivity(intent);
+                } catch (Exception e1) {
+                  try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriString.trim()));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivity(intent);
+                  } catch (Exception e2) {
+                    openGallery();
+                  }
+                }
+              }
+
+              @JavascriptInterface
               public void openGallery() {
                 try {
                   Intent intent = new Intent(Intent.ACTION_VIEW);
                   intent.setDataAndType(Uri.parse("content://media/external/images/media"), "image/*");
                   intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                   startActivity(intent);
-                } catch (Exception e1) {
-                  try {
-                    Intent intent = new Intent(Intent.ACTION_MAIN);
-                    intent.addCategory(Intent.CATEGORY_APP_GALLERY);
-                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(intent);
-                  } catch (Exception e2) {
-                    try {
-                      Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("content://media/external/images/media"));
-                      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                      startActivity(intent);
-                    } catch (Exception ignored) {}
-                  }
-                }
+                  return;
+                } catch (Exception ignored) {}
+                try {
+                  Intent intent = new Intent(Intent.ACTION_MAIN);
+                  intent.addCategory(Intent.CATEGORY_APP_GALLERY);
+                  intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  startActivity(intent);
+                  return;
+                } catch (Exception ignored) {}
+                try {
+                  Intent intent = new Intent(Intent.ACTION_VIEW);
+                  intent.setType("image/*");
+                  intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  startActivity(intent);
+                } catch (Exception ignored) {}
               }
             }
           }

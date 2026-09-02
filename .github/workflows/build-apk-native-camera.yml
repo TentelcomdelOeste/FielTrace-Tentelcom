@@ -1,0 +1,97 @@
+name: Build FielTrace APK - Native Camera
+
+on:
+  push:
+    branches:
+      - native-camera-gallery-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout native camera branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Verify native camera implementation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          app = Path('src/App.tsx').read_text()
+          cam = Path('src/services/cameraService.ts').read_text()
+          main = Path('android/app/src/main/java/com/fieldtrace/app/MainActivity.java').read_text()
+          pkg = json.loads(Path('package.json').read_text())
+          checks = {
+              'camera-preview dependency': '@capgo/camera-preview' in pkg['dependencies'],
+              'native preview start': 'CameraPreview.start' in app,
+              'native capture': 'CameraPreview.capture' in app,
+              'native zoom': 'CameraPreview.setZoom' in app,
+              'native flash': 'CameraPreview.setFlashMode' in app,
+              'overlay': 'cameraService.drawOverlay(rawImage, evidenceObject)' in app,
+              'gallery save': 'cameraService.saveToGallery(finalImage, fileName)' in app,
+              'Field Trace album': 'Field Trace' in cam and 'Media.savePhoto' in cam,
+              'MediaStore URI': 'resolveImageContentUri' in main and 'MediaStore.Images.Media' in main,
+              'gallery viewer': 'Intent.ACTION_VIEW' in main and 'image/*' in main,
+          }
+          failed = [k for k, v in checks.items() if not v]
+          if failed:
+              raise SystemExit('Native camera verification failed: ' + ', '.join(failed))
+          print('Native camera/gallery verification PASSED')
+          PY
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Capacitor sync
+        run: npx cap sync android
+
+      - name: Verify Android project
+        run: |
+          test -f android/gradlew
+          test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'resolveImageContentUri' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+
+      - name: Prepare Gradle
+        working-directory: android
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FielTrace-native-camera-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

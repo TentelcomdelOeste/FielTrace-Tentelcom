@@ -4,6 +4,10 @@ import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.net.Uri;
+import android.content.ContentUris;
+import android.database.Cursor;
+import android.graphics.Color;
+import android.provider.MediaStore;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
@@ -39,6 +43,8 @@ public class MainActivity extends BridgeActivity {
       settings.setMediaPlaybackRequiresUserGesture(false);
       settings.setDomStorageEnabled(true);
       settings.setJavaScriptEnabled(true);
+      webView.setBackgroundColor(Color.TRANSPARENT);
+      webView.getRootView().setBackgroundColor(Color.TRANSPARENT);
       webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
       try {
         webView.addJavascriptInterface(new FieldTraceBridge(), "FieldTraceNative");
@@ -68,7 +74,7 @@ public class MainActivity extends BridgeActivity {
         return;
       }
       try {
-        Uri uri = Uri.parse(uriString.trim());
+        Uri uri = resolveImageContentUri(uriString.trim());
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.setDataAndType(uri, "image/*");
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -84,6 +90,17 @@ public class MainActivity extends BridgeActivity {
           openGallery();
         }
       }
+    }
+
+    private Uri resolveImageContentUri(String uriString) {
+      Uri parsed=Uri.parse(uriString);
+      if ("content".equalsIgnoreCase(parsed.getScheme())) return parsed;
+      String path="file".equalsIgnoreCase(parsed.getScheme()) ? parsed.getPath() : uriString;
+      String[] projection={MediaStore.Images.Media._ID,MediaStore.Images.Media.DATA};
+      try (Cursor cursor=getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,projection,MediaStore.Images.Media.DATA+"=?",new String[]{path},null)) {
+        if(cursor!=null && cursor.moveToFirst()) { long id=cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)); return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,id); }
+      }
+      throw new IllegalArgumentException("Image not found in MediaStore: "+path);
     }
 
     @JavascriptInterface

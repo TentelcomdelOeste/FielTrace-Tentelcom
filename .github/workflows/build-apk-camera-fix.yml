@@ -1,0 +1,92 @@
+name: Build FielTrace APK - Camera Fix
+
+on:
+  push:
+    branches:
+      - native-camera-gallery-fix
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout camera fix branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Source verification
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          app = Path('src/App.tsx').read_text()
+          cam = Path('src/services/cameraService.ts').read_text()
+          pkg = json.loads(Path('package.json').read_text())
+          main = Path('android/app/src/main/java/com/fieldtrace/app/MainActivity.java')
+          checks = {
+            'CameraPreview dependency': '@capgo/camera-preview' in pkg['dependencies'],
+            'native capture': 'CameraPreview.capture' in app,
+            'native zoom': 'CameraPreview.setZoom' in app,
+            'native flash': 'CameraPreview.setFlashMode' in app,
+            'overlay': 'cameraService.drawOverlay(rawImage, evidenceObject)' in app,
+            'gallery save': 'cameraService.saveToGallery(finalImage, fileName)' in app,
+            'Field Trace album': 'Field Trace' in cam and 'Media.savePhoto' in cam,
+            'native gallery bridge': main.exists() and 'FieldTraceNative' in main.read_text(),
+          }
+          failed = [k for k,v in checks.items() if not v]
+          if failed: raise SystemExit('SOURCE VERIFICATION FAILED: ' + ', '.join(failed))
+          print('SOURCE VERIFICATION PASSED')
+          PY
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Ensure Android platform
+        run: |
+          if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Verify native Android bridge after sync
+        run: |
+          grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'getDefaultVideoPoster' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FielTrace-camera-fix-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

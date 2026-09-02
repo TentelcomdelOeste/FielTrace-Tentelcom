@@ -87,3 +87,6 @@ video {
 .technical-label {
   @apply text-[9px] text-gray-400 uppercase font-bold block mb-1 tracking-wider;
 }
+
+
+html.native-camera-active, html.native-camera-active body, html.native-camera-active #root { background: transparent !important; }

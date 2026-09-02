@@ -1,5 +1,7 @@
 name: Apply Complete Camera Fixes
 
+# Final source patch is committed before the APK validation workflow runs.
+
 on:
   push:
     branches:

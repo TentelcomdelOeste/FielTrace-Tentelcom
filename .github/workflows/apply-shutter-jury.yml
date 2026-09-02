@@ -1,0 +1,145 @@
+name: Apply non-blocking shutter for jury buttons
+on:
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Restore App.tsx from known-good commit then apply shutter+GPS patch
+        run: |
+          set -e
+          # Restore full App.tsx from commit before placeholder corruption
+          git show d5a1666d92c1d20943cd764ce80c0744fe64a2ef:src/App.tsx > src/App.tsx
+          wc -c src/App.tsx
+          head -5 src/App.tsx
+
+          # Apply the non-blocking shutter + GPS-off patch
+          cat > /tmp/shutter_gps.patch << 'PATCHEOF'
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -88,7 +88,14 @@
+   let gpsLabel = 'SIN GPS';
+   let gpsColor = 'text-yellow-400 animate-pulse';
+ 
+-  if (gps) {
++  // Prioridad: si el GPS del teléfono está apagado o sin permiso, NO mostrar caché
++  if (diagnostic?.status === 'location_disabled' || diagnostic?.locationServicesEnabled === false) {
++    gpsLabel = 'SIN GPS (GPS DESACTIVADO)';
++    gpsColor = 'text-red-400';
++  } else if (diagnostic?.status === 'permission_denied') {
++    gpsLabel = 'SIN GPS (PERMISOS DENEGADOS)';
++    gpsColor = 'text-red-400';
++  } else if (gps) {
+     if (isLive) {
+       gpsLabel = `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}`;
+       gpsColor = 'text-green-400';
+@@ -96,12 +103,6 @@
+       gpsLabel = `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)} (CACHÉ)`;
+       gpsColor = 'text-amber-300';
+     }
+-  } else if (diagnostic?.status === 'location_disabled') {
+-    gpsLabel = 'SIN GPS (GPS DESACTIVADO)';
+-    gpsColor = 'text-red-400';
+-  } else if (diagnostic?.status === 'permission_denied') {
+-    gpsLabel = 'SIN GPS (PERMISOS DENEGADOS)';
+-    gpsColor = 'text-red-400';
+   } else if (diagnostic?.status === 'acquiring') {
+     gpsLabel = 'BUSCANDO GPS...';
+     gpsColor = 'text-yellow-400 animate-pulse';
+@@ -449,39 +450,44 @@
+ 
+   const captureBatchPhoto = async () => {
+     if (!selectedProject || isProcessing) return;
+-    setIsProcessing(true);
+-    
+-    // Feedback visual rápido INMEDIATO al presionar
++
++    // Feedback visual inmediato (no bloquea)
+     const pulse = document.getElementById('camera-pulse');
+     if (pulse) {
+       pulse.classList.add('bg-white/60');
+       setTimeout(() => pulse.classList.remove('bg-white/60'), 120);
+     }
+ 
+-    try {
+-      // Re-armar el flash nativo si está en 'on' antes de la captura
+-      if (flashMode === 'on') {
+-        await ensureFlashArmed('on');
+-      }
++    // Bloqueo SOLO durante la captura nativa del sensor (anti doble-tap).
++    // NO se espera flash, GPS, overlay, geocode, gallery ni IndexedDB.
++    setIsProcessing(true);
+ 
+-      // Captura optimizada a 1920x1440 max / calidad 80 para puente nativo ultra-rápido (<150ms)
++    try {
++      // Captura física: único await en el camino crítico del obturador
+       const captureResult = await CameraPreview.capture({ width: 1920, quality: 80, format: 'jpeg' });
+       const capturedValue = captureResult?.value;
+       const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
+       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
+ 
+-      // Liberar obturador instantáneamente
++      // Liberar obturador INMEDIATAMENTE tras obtener la foto del sensor
+       setIsProcessing(false);
+ 
+-      // Obtener coordenada fresca o fallback en caché
+-      const freshGps = await locationService.getFreshGps();
+-      const { gps: stateGps, locationData, isLive } = locationService.getCurrentState();
+-      const activeGps = freshGps || stateGps;
++      // Re-armar flash en background (no bloquea siguiente disparo)
++      if (flashMode === 'on') {
++        void ensureFlashArmed('on');
++      }
++
++      // GPS 100% síncrono en memoria (0ms). Si GPS del teléfono está apagado → SIN GPS (no caché)
++      const { gps: stateGps, locationData, isLive, diagnostic } = locationService.getCurrentState();
++      const locationOff = diagnostic?.status === 'location_disabled' || diagnostic?.locationServicesEnabled === false;
++      const activeGps = locationOff ? null : stateGps;
+       const hasGps = !!(activeGps && activeGps.lat != null && activeGps.lon != null);
+-      const isActualLive = activeGps?.source === 'live' || (isLive && activeGps === freshGps);
+-      const gpsLabel = hasGps
+-        ? (isActualLive ? `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)}` : `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)} (CACHÉ)`)
+-        : 'SIN GPS';
++      const isActualLive = !!(hasGps && (activeGps!.source === 'live' || isLive));
++      const gpsLabel = locationOff
++        ? 'SIN GPS (GPS DESACTIVADO)'
++        : hasGps
++          ? (isActualLive ? `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)}` : `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)} (CACHÉ)`)
++          : 'SIN GPS';
+       const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
+       const ubicacionText = hasGps && currentFormattedLocation && currentFormattedLocation !== "Buscando..."
+         ? currentFormattedLocation
+PATCHEOF
+          patch -p1 < /tmp/shutter_gps.patch
+          echo "=== VERIFY ==="
+          grep -n "Liberar obturador INMEDIATAMENTE" src/App.tsx
+          grep -n "SIN GPS (GPS DESACTIVADO)" src/App.tsx | head -3
+          grep -c "setIsProcessing(false)" src/App.tsx
+          # Ensure no await ensureFlashArmed before capture
+          if grep -A20 "const captureBatchPhoto" src/App.tsx | grep -q "await ensureFlashArmed"; then
+            echo "FAIL: still has await ensureFlashArmed in critical path"
+            exit 1
+          fi
+          echo "OK: non-blocking shutter verified"
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx
+          git status
+          git commit -m "fix(shutter+gps): non-blocking jury/shutter buttons
+
+- Liberar isProcessing inmediatamente tras CameraPreview.capture
+- No await flash/GPS en camino critico del obturador
+- Flash re-arm en background (void ensureFlashArmed)
+- Si GPS del telefono apagado: mostrar SIN GPS (GPS DESACTIVADO), no coordenadas en cache
+- El boton de jurados/obturador queda disponible al instante para la siguiente foto" || echo "nothing to commit"
+          git push origin main

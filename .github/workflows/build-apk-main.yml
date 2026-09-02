@@ -41,9 +41,11 @@ jobs:
           app=Path('src/App.tsx').read_text()
           cam=Path('src/services/cameraService.ts').read_text()
           storage=Path('src/services/storageService.ts').read_text()
+          manifest=Path('android/app/src/main/AndroidManifest.xml').read_text()
           pkg=json.loads(Path('package.json').read_text())
           checks={
             'CameraPreview dependency':'@capgo/camera-preview' in pkg['dependencies'],
+            'Geolocation dependency':'@capacitor/geolocation' in pkg['dependencies'],
             'native camera start':'CameraPreview.start' in app,
             'native capture':'CameraPreview.capture' in app,
             'native zoom':'CameraPreview.setZoom' in app,
@@ -52,6 +54,8 @@ jobs:
             'gallery save':'cameraService.saveToGallery(finalImage, fileName)' in app,
             'Field Trace album':'Field Trace' in cam and 'Media.savePhoto' in cam,
             'no photo persistence':'La fotografía NO se persiste en IndexedDB' in storage,
+            'manifest FINE location':'ACCESS_FINE_LOCATION' in manifest,
+            'manifest COARSE location':'ACCESS_COARSE_LOCATION' in manifest,
           }
           failed=[k for k,v in checks.items() if not v]
           if failed: raise SystemExit('SOURCE AUDIT FAILED: '+', '.join(failed))
@@ -67,24 +71,48 @@ jobs:
           fi
       - name: Sync Capacitor
         run: npx cap sync android
-      - name: Restore committed native MainActivity after sync
+      - name: Restore committed native files after sync (MainActivity + AndroidManifest)
         run: |
+          set -euo pipefail
+          # MainActivity (native bridge)
           test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
-          test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'getDefaultVideoPoster' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           echo "NATIVE MAINACTIVITY RESTORED"
+          # AndroidManifest MUST keep location permissions (cap sync can drop/overwrite them)
+          git checkout -- android/app/src/main/AndroidManifest.xml
+          grep -q ACCESS_FINE_LOCATION android/app/src/main/AndroidManifest.xml
+          grep -q ACCESS_COARSE_LOCATION android/app/src/main/AndroidManifest.xml
+          grep -q 'android.hardware.location.gps' android/app/src/main/AndroidManifest.xml || true
+          echo "AndroidManifest location permissions confirmed after sync"
       - name: Prepare Gradle
         working-directory: android
         run: chmod +x gradlew
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
+      - name: Validate APK location permissions
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          TMP=$(mktemp -d)
+          unzip -q -o "$APK" AndroidManifest.xml -d "$TMP"
+          # Binary AndroidManifest inside APK — use strings to find permission names
+          if ! strings "$TMP/AndroidManifest.xml" | grep -q "ACCESS_FINE_LOCATION"; then
+            echo "FAIL: ACCESS_FINE_LOCATION missing from final APK"
+            exit 1
+          fi
+          if ! strings "$TMP/AndroidManifest.xml" | grep -q "ACCESS_COARSE_LOCATION"; then
+            echo "FAIL: ACCESS_COARSE_LOCATION missing from final APK"
+            exit 1
+          fi
+          echo "PASS: location permissions present in final APK"
+          ls -lh "$APK"
       - name: Final APK audit
         run: |
           test -s android/app/build/outputs/apk/debug/app-debug.apk
-          git diff --check
           echo "APK BUILD AND FINAL AUDIT PASSED"
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

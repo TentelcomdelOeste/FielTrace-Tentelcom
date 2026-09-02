@@ -1,1 +1,327 @@
-PLACEHOLDER_BAD
+name: Build FielTrace APK (main)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Verify camera and gallery-only storage implementation
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          app = Path('src/App.tsx').read_text()
+          storage = Path('src/services/storageService.ts').read_text()
+          cam = Path('src/services/cameraService.ts').read_text()
+
+          required_app = [
+              'const rawImage = webcamRef.current.getScreenshot();',
+              'cameraService.drawOverlay(rawImage, evidenceObject)',
+              'cameraService.saveToGallery(finalImage, fileName)',
+          ]
+          required_storage = [
+              'La fotograf\u00eda NO se persiste en IndexedDB',
+              'firebaseService.syncEvidenceToCloud(evidenceToSave)',
+          ]
+          required_cam = [
+              "Field Trace",
+              'Media.savePhoto',
+          ]
+
+          missing = [x for x in required_app + required_storage + required_cam if x not in app + storage + cam]
+          if missing:
+              raise SystemExit('Camera/gallery implementation verification failed: ' + '; '.join(missing))
+
+          print('Verified: camera capture -> overlay -> gallery Field Trace album')
+          PY
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Ensure complete Capacitor Android platform
+        shell: bash
+        run: |
+          if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            echo "Incomplete Android platform detected; regenerating with Capacitor."
+            rm -rf android
+            npx cap add android
+          else
+            echo "Complete Android platform already present; preserving it."
+          fi
+
+      - name: Ensure MainActivity (transparent poster + FieldTraceNative)
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEST="android/app/src/main/java/com/fieldtrace/app/MainActivity.java"
+          mkdir -p "$(dirname "$DEST")"
+          cat > "$DEST" << 'JAVA'
+          package com.fieldtrace.app;
+
+          import android.content.Intent;
+          import android.graphics.Bitmap;
+          import android.graphics.Canvas;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import com.getcapacitor.BridgeActivity;
+          import com.getcapacitor.BridgeWebChromeClient;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              applyCameraWebViewFixes();
+            }
+
+            @Override
+            public void onStart() {
+              super.onStart();
+              applyCameraWebViewFixes();
+            }
+
+            @Override
+            public void onResume() {
+              super.onResume();
+              applyCameraWebViewFixes();
+            }
+
+            private void applyCameraWebViewFixes() {
+              try {
+                if (this.bridge == null) return;
+                WebView webView = this.bridge.getWebView();
+                if (webView == null) return;
+                WebSettings settings = webView.getSettings();
+                settings.setMediaPlaybackRequiresUserGesture(false);
+                settings.setDomStorageEnabled(true);
+                settings.setJavaScriptEnabled(true);
+                webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
+                try {
+                  webView.addJavascriptInterface(new FieldTraceBridge(), "FieldTraceNative");
+                } catch (Exception ignored) {}
+                webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
+                  @Override
+                  public Bitmap getDefaultVideoPoster() {
+                    Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+                    Canvas canvas = new Canvas(bitmap);
+                    canvas.drawARGB(0, 0, 0, 0);
+                    return bitmap;
+                  }
+                });
+                webView.post(() -> {
+                  try {
+                    webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+                  } catch (Exception ignored) {}
+                });
+              } catch (Exception ignored) {}
+            }
+
+            public class FieldTraceBridge {
+              @JavascriptInterface
+              public void openGallery() {
+                try {
+                  Intent intent = new Intent(Intent.ACTION_VIEW);
+                  intent.setDataAndType(Uri.parse("content://media/external/images/media"), "image/*");
+                  intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  startActivity(intent);
+                } catch (Exception e1) {
+                  try {
+                    Intent intent = new Intent(Intent.ACTION_MAIN);
+                    intent.addCategory(Intent.CATEGORY_APP_GALLERY);
+                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                  } catch (Exception e2) {
+                    try {
+                      Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("content://media/external/images/media"));
+                      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                      startActivity(intent);
+                    } catch (Exception ignored) {}
+                  }
+                }
+              }
+            }
+          }
+          JAVA
+          sed -i 's/^          //' "$DEST" || true
+          grep -q getDefaultVideoPoster "$DEST"
+          grep -q FieldTraceNative "$DEST"
+          echo "--- MainActivity OK ---"
+
+      - name: Ensure Android runtime permissions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('android/app/src/main/AndroidManifest.xml')
+          s = p.read_text()
+          required = [
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.CAMERA" />',
+              '<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />',
+              '<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />',
+              '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
+              '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+              '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+          ]
+          marker = '</manifest>'
+          missing = [x for x in required if x not in s]
+          if missing:
+              s = s.replace(marker, '\n    ' + '\n    '.join(missing) + '\n' + marker)
+          if 'android:hardwareAccelerated="true"' not in s:
+              s = s.replace('android:exported="true"', 'android:exported="true"\n            android:hardwareAccelerated="true"', 1)
+          p.write_text(s)
+          print('Verified Android permissions')
+          PY
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
+
+      - name: Re-apply MainActivity after cap sync (transparent poster + FieldTraceNative)
+        shell: bash
+        run: |
+          DEST="android/app/src/main/java/com/fieldtrace/app/MainActivity.java"
+          mkdir -p "$(dirname "$DEST")"
+          cat > "$DEST" << 'JAVA'
+          package com.fieldtrace.app;
+
+          import android.content.Intent;
+          import android.graphics.Bitmap;
+          import android.graphics.Canvas;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.webkit.JavascriptInterface;
+          import android.webkit.WebSettings;
+          import android.webkit.WebView;
+          import com.getcapacitor.BridgeActivity;
+          import com.getcapacitor.BridgeWebChromeClient;
+
+          public class MainActivity extends BridgeActivity {
+            @Override
+            public void onCreate(Bundle savedInstanceState) {
+              super.onCreate(savedInstanceState);
+              applyCameraWebViewFixes();
+            }
+
+            @Override
+            public void onStart() {
+              super.onStart();
+              applyCameraWebViewFixes();
+            }
+
+            @Override
+            public void onResume() {
+              super.onResume();
+              applyCameraWebViewFixes();
+            }
+
+            private void applyCameraWebViewFixes() {
+              try {
+                if (this.bridge == null) return;
+                WebView webView = this.bridge.getWebView();
+                if (webView == null) return;
+                WebSettings settings = webView.getSettings();
+                settings.setMediaPlaybackRequiresUserGesture(false);
+                settings.setDomStorageEnabled(true);
+                settings.setJavaScriptEnabled(true);
+                webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
+                try {
+                  webView.addJavascriptInterface(new FieldTraceBridge(), "FieldTraceNative");
+                } catch (Exception ignored) {}
+                webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
+                  @Override
+                  public Bitmap getDefaultVideoPoster() {
+                    Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+                    Canvas canvas = new Canvas(bitmap);
+                    canvas.drawARGB(0, 0, 0, 0);
+                    return bitmap;
+                  }
+                });
+                webView.post(() -> {
+                  try {
+                    webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+                  } catch (Exception ignored) {}
+                });
+              } catch (Exception ignored) {}
+            }
+
+            public class FieldTraceBridge {
+              @JavascriptInterface
+              public void openGallery() {
+                try {
+                  Intent intent = new Intent(Intent.ACTION_VIEW);
+                  intent.setDataAndType(Uri.parse("content://media/external/images/media"), "image/*");
+                  intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                  startActivity(intent);
+                } catch (Exception e1) {
+                  try {
+                    Intent intent = new Intent(Intent.ACTION_MAIN);
+                    intent.addCategory(Intent.CATEGORY_APP_GALLERY);
+                    intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                  } catch (Exception e2) {
+                    try {
+                      Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("content://media/external/images/media"));
+                      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                      startActivity(intent);
+                    } catch (Exception ignored) {}
+                  }
+                }
+              }
+            }
+          }
+          JAVA
+          sed -i 's/^          //' "$DEST" || true
+          grep -q getDefaultVideoPoster "$DEST"
+          grep -q FieldTraceNative "$DEST"
+          echo "MainActivity re-applied with FieldTraceNative"
+
+      - name: Prepare Gradle
+        working-directory: android
+        run: chmod +x gradlew
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Upload current APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FielTrace-main-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

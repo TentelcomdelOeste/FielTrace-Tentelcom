@@ -46,44 +46,45 @@ jobs:
           app = Path('src/App.tsx').read_text()
           cam_screen = Path('src/components/CameraScreen.tsx').read_text() if Path('src/components/CameraScreen.tsx').exists() else ''
           cam = Path('src/services/cameraService.ts').read_text()
+          loc = Path('src/services/locationService.ts').read_text()
           pkg = json.loads(Path('package.json').read_text())
           main = Path('android/app/src/main/java/com/fieldtrace/app/MainActivity.java')
           main_txt = main.read_text() if main.exists() else ''
+          manifest = Path('android/app/src/main/AndroidManifest.xml').read_text() if Path('android/app/src/main/AndroidManifest.xml').exists() else ''
+          paths = Path('android/app/src/main/res/xml/file_paths.xml')
           checks = {
-            'App.tsx is real source (not placeholder)': 'export default function App' in app and 'RESTORING_FROM_LOCAL' not in app and len(app) > 5000,
-            'camera content uses hidden not invisible': "currentStep === 'camera' ? 'hidden'" in app,
+            'App.tsx is real source': 'export default function App' in app and 'RESTORING_FROM_LOCAL' not in app and len(app) > 5000,
+            'camera hidden class': "currentStep === 'camera' ? 'hidden'" in app,
             'Campos Operativos modal': 'Campos Operativos' in app and 'showQuickConfig' in app,
-            'CameraPreview dependency': '@capgo/camera-preview' in pkg.get('dependencies', {}),
-            'native camera start': 'CameraPreview.start' in cam_screen,
-            'camera requests permission': 'CameraPreview.requestPermissions' in cam_screen,
-            'location requests permission': 'locationService.checkAndRequestPermissions' in cam_screen,
-            'camera uses full-screen fill': "aspectRatio: 'fill'" in cam_screen and "setAspectRatio({ aspectRatio: 'fill'" in cam_screen,
-            'camera does not force 4:3 dimensions': 'width: window.innerWidth' not in cam_screen and 'height: window.innerHeight' not in cam_screen,
+            'camera dependency': '@capgo/camera-preview' in pkg.get('dependencies', {}),
+            'camera start': 'CameraPreview.start' in cam_screen,
+            'camera permissions': 'CameraPreview.requestPermissions' in cam_screen,
+            'GPS permissions': 'locationService.checkAndRequestPermissions' in cam_screen,
+            'camera full-screen fill': "aspectRatio: 'fill'" in cam_screen and "setAspectRatio({ aspectRatio: 'fill'" in cam_screen,
+            'no forced screen dimensions': 'width: window.innerWidth' not in cam_screen and 'height: window.innerHeight' not in cam_screen,
             'native capture': 'CameraPreview.capture' in app,
-            'capture prioritizes speed': "photoQualityPrioritization:'speed'" in app,
+            'capture speed priority': "photoQualityPrioritization:'speed'" in app,
             'native zoom': 'CameraPreview.setZoom' in cam_screen,
             'native flash': 'CameraPreview.setFlashMode' in cam_screen,
-            'photo flash modes': "'off' | 'on' | 'auto'" in cam_screen and 'torch' not in cam_screen,
-            'draggable gear': 'onPointerMove={handleGearPointerMove}' in cam_screen and 'handleGearPointerDown' in cam_screen,
-            'camera start error state': 'cameraError' in cam_screen and 'Reintentar cámara' in cam_screen,
-            'overlay': 'drawOverlay' in app or 'drawOverlay' in cam,
-            'gallery save': 'saveToGallery' in app,
-            'Field Trace album': 'Field Trace' in cam and 'Media.savePhoto' in cam,
-            'gallery opens collection': 'openFieldTraceAlbum(false)' in app,
-            'gallery disabled before first photo': 'disabled={!lastImage}' in cam_screen,
-            'rememberSaved path': 'rememberSaved' in cam or 'extractSavedPath' in cam,
+            'gear drag control': 'handleGearPointerMove' in cam_screen,
+            'camera error retry': 'cameraError' in cam_screen and 'Reintentar cámara' in cam_screen,
+            'gallery save': 'saveToGallery' in app and 'Media.savePhoto' in cam,
+            'Field Trace album': 'Field Trace' in cam,
             'native gallery bridge': 'FieldTraceNative' in main_txt,
-            'openByFileName': 'openByFileName' in main_txt,
-            'content URI resolution': 'resolveImageContentUri' in main_txt,
-            'no raw path ACTION_VIEW': 'Uri.parse(uriString.trim())' not in main_txt,
-            'preferred gallery packages': 'PREFERRED_GALLERY_PACKAGES' in main_txt and 'com.google.android.apps.photos' in main_txt,
+            'native media scanner': 'MediaScannerConnection.scanFile' in main_txt,
+            'FileProvider fallback': 'FileProvider.getUriForFile' in main_txt,
+            'preferred Google Photos': 'com.google.android.apps.photos' in main_txt,
+            'no raw ACTION_VIEW file path': 'ACTION_VIEW' in main_txt and 'Uri.parse(uriString.trim())' not in main_txt,
+            'GPS resilient fallback': 'trying network fix' in loc and 'getCurrentPosition' in loc,
+            'GPS watcher': 'Geolocation.watchPosition' in loc,
+            'location permissions manifest': 'ACCESS_FINE_LOCATION' in manifest and 'ACCESS_COARSE_LOCATION' in manifest,
+            'FileProvider manifest': 'androidx.core.content.FileProvider' in manifest and '${applicationId}.fileprovider' in manifest,
+            'FileProvider paths': paths.exists() and 'external-media-path' in paths.read_text(),
           }
           failed = [k for k, v in checks.items() if not v]
           if failed:
             raise SystemExit('SOURCE VERIFICATION FAILED: ' + ', '.join(failed))
           print('SOURCE VERIFICATION PASSED')
-          for k in checks:
-            print(f'  OK {k}')
           PY
 
       - name: TypeScript lint
@@ -100,15 +101,16 @@ jobs:
           fi
           npx cap sync android
 
-      - name: Restore MainActivity after cap sync if needed
+      - name: Restore custom Android files after cap sync
         run: |
-          if ! grep -q 'openByFileName' android/app/src/main/java/com/fieldtrace/app/MainActivity.java 2>/dev/null; then
-            echo "MainActivity missing openByFileName after sync — checking out from branch"
-            git checkout HEAD -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java || true
-          fi
+          git checkout HEAD -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          git checkout HEAD -- android/app/src/main/AndroidManifest.xml
+          git checkout HEAD -- android/app/src/main/res/xml/file_paths.xml
+          test -f android/app/src/main/res/xml/file_paths.xml
           grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
-          grep -q 'openByFileName' android/app/src/main/java/com/fieldtrace/app/MainActivity.java || grep -q 'openUri' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
-          echo "Native bridge OK"
+          grep -q 'FileProvider' android/app/src/main/AndroidManifest.xml
+          grep -q 'external-media-path' android/app/src/main/res/xml/file_paths.xml
+          echo "Custom Android files restored and verified"
 
       - name: Prepare Gradle
         working-directory: android

@@ -30,6 +30,7 @@ let currentLocationData: any = (() => {
 let lastGeocodeLat = 0;
 let lastGeocodeLon = 0;
 let lastGeocodeTime = 0;
+let fetchPromise: Promise<any> | null = null;
 
 /** GPS older than this is treated as stale (30 minutes) */
 const GPS_FRESH_MS = 1800_000;
@@ -126,101 +127,112 @@ export const locationService = {
   },
 
   async getCurrentPosition() {
-    try {
-      const hasPermission = await this.checkAndRequestPermissions();
-      if (!hasPermission) {
-        this.clearGps();
-        return null;
-      }
+    if (fetchPromise) return fetchPromise;
 
-      // 1. First try cached or fresh position from Capacitor Geolocation (high accuracy)
+    fetchPromise = (async () => {
       try {
-        const coordinates = await Geolocation.getCurrentPosition({
-          enableHighAccuracy: true,
-          timeout: 5000,
-          maximumAge: 60000
-        });
-        const gps = {
-          lat: coordinates.coords.latitude,
-          lon: coordinates.coords.longitude,
-          accuracy: coordinates.coords.accuracy,
-          timestamp: coordinates.timestamp || Date.now()
-        };
-        setGpsState(gps);
-        if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
-          lastGeocodeLat = gps.lat;
-          lastGeocodeLon = gps.lon;
-          lastGeocodeTime = Date.now();
-          this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+        const hasPermission = await this.checkAndRequestPermissions();
+        if (!hasPermission) {
+          this.clearGps();
+          return null;
         }
-        return gps;
-      } catch (highAccErr) {
-        console.warn('High accuracy location timeout/fail, trying low accuracy...', highAccErr);
-      }
 
-      // 2. Retry with low accuracy (Cell / Wi-Fi network location, works indoors)
-      try {
-        const coordinates = await Geolocation.getCurrentPosition({
-          enableHighAccuracy: false,
-          timeout: 5000,
-          maximumAge: 120000
-        });
-        const gps = {
-          lat: coordinates.coords.latitude,
-          lon: coordinates.coords.longitude,
-          accuracy: coordinates.coords.accuracy,
-          timestamp: coordinates.timestamp || Date.now()
-        };
-        setGpsState(gps);
-        if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
-          lastGeocodeLat = gps.lat;
-          lastGeocodeLon = gps.lon;
-          lastGeocodeTime = Date.now();
-          this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+        // 1. First try cached or fresh position from Capacitor Geolocation (high accuracy)
+        try {
+          const coordinates = await Geolocation.getCurrentPosition({
+            enableHighAccuracy: true,
+            timeout: 5000,
+            maximumAge: 60000
+          });
+          const gps = {
+            lat: coordinates.coords.latitude,
+            lon: coordinates.coords.longitude,
+            accuracy: coordinates.coords.accuracy,
+            timestamp: coordinates.timestamp || Date.now()
+          };
+          setGpsState(gps);
+          if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
+            lastGeocodeLat = gps.lat;
+            lastGeocodeLon = gps.lon;
+            lastGeocodeTime = Date.now();
+            this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+          }
+          return gps;
+        } catch (highAccErr) {
+          console.warn('High accuracy location timeout/fail, trying low accuracy...', highAccErr);
         }
-        return gps;
-      } catch (lowAccErr) {
-        console.warn('Low accuracy location failed:', lowAccErr);
-      }
 
-      // 3. Web API Fallback
-      if (navigator.geolocation) {
-        return new Promise((resolve) => {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              const gps = {
-                lat: pos.coords.latitude,
-                lon: pos.coords.longitude,
-                accuracy: pos.coords.accuracy,
-                timestamp: pos.timestamp || Date.now()
-              };
-              setGpsState(gps);
-              if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
-                lastGeocodeLat = gps.lat;
-                lastGeocodeLon = gps.lon;
-                lastGeocodeTime = Date.now();
-                this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
-              }
-              resolve(gps);
-            },
-            (err) => {
-              console.warn('navigator.geolocation failed:', err);
-              resolve(currentGps);
-            },
-            { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }
-          );
-        });
-      }
+        // 2. Retry with low accuracy (Cell / Wi-Fi network location, works indoors)
+        try {
+          const coordinates = await Geolocation.getCurrentPosition({
+            enableHighAccuracy: false,
+            timeout: 5000,
+            maximumAge: 120000
+          });
+          const gps = {
+            lat: coordinates.coords.latitude,
+            lon: coordinates.coords.longitude,
+            accuracy: coordinates.coords.accuracy,
+            timestamp: coordinates.timestamp || Date.now()
+          };
+          setGpsState(gps);
+          if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
+            lastGeocodeLat = gps.lat;
+            lastGeocodeLon = gps.lon;
+            lastGeocodeTime = Date.now();
+            this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+          }
+          return gps;
+        } catch (lowAccErr) {
+          console.warn('Low accuracy location failed:', lowAccErr);
+        }
 
-      return currentGps;
-    } catch (error) {
-      console.error('Error getting location', error);
-      return currentGps;
-    }
+        // 3. Web API Fallback
+        if (navigator.geolocation) {
+          return new Promise((resolve) => {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => {
+                const gps = {
+                  lat: pos.coords.latitude,
+                  lon: pos.coords.longitude,
+                  accuracy: pos.coords.accuracy,
+                  timestamp: pos.timestamp || Date.now()
+                };
+                setGpsState(gps);
+                if (navigator.onLine && (!lastGeocodeLat || (Date.now() - lastGeocodeTime > 60000))) {
+                  lastGeocodeLat = gps.lat;
+                  lastGeocodeLon = gps.lon;
+                  lastGeocodeTime = Date.now();
+                  this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+                }
+                resolve(gps);
+              },
+              (err) => {
+                console.warn('navigator.geolocation failed:', err);
+                resolve(currentGps);
+              },
+              { enableHighAccuracy: false, timeout: 5000, maximumAge: 300000 }
+            );
+          });
+        }
+
+        return currentGps;
+      } catch (error) {
+        console.error('Error getting location', error);
+        return currentGps;
+      } finally {
+        fetchPromise = null;
+      }
+    })();
+
+    return fetchPromise;
   },
 
   /** Returns fresh GPS or cached GPS */
   async getFreshGps() {
+    if (fetchPromise) {
+      await fetchPromise;
+    }
     if (currentGps) return currentGps;
     return this.getCurrentPosition();
   },

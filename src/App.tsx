@@ -237,7 +237,7 @@ export default function App() {
     // Request fresh location fix immediately when opening camera
     void locationService.getCurrentPosition();
     (async () => { try {
-      await CameraPreview.start({ position:'rear', toBack:true, aspectMode:'cover', storeToFile:false, disableAudio:true, initialZoomLevel:1, rotateWhenOrientationChanged:true });
+      await CameraPreview.start({ position:'rear', toBack:true, aspectRatio:'fill', aspectMode:'cover', storeToFile:false, disableAudio:true, initialZoomLevel:1, rotateWhenOrientationChanged:true });
       if (!active) return;
       await CameraPreview.setFlashMode({ flashMode });
       await CameraPreview.setZoom({ level: cameraZoom });
@@ -414,6 +414,8 @@ export default function App() {
       // Liberar obturador instantáneamente
       setIsProcessing(false);
 
+      // Intentar forzar una lectura fresca ANTES de capturar los metadatos
+      await locationService.getFreshGps();
       const { gps, locationData } = locationService.getCurrentState();
       const hasGps = !!(gps && gps.lat != null && gps.lon != null);
       const gpsLabel = hasGps ? `${gps!.lat.toFixed(6)}, ${gps!.lon.toFixed(6)}` : 'SIN GPS';

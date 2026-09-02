@@ -30,24 +30,52 @@ export const cameraService = {
         try {
           let targetWidth = img.width;
           let targetHeight = img.height;
+
+          // Recortar la imagen capturada para que coincida exactamente con la relación de aspecto de la pantalla (WYSIWYG)
+          // Esto replica el comportamiento de aspectMode: 'cover' (FILL_CENTER) de la cámara nativa.
+          const screenRatio = window.innerWidth / window.innerHeight;
+          const imageRatio = targetWidth / targetHeight;
+
+          let sourceX = 0;
+          let sourceY = 0;
+          let sourceWidth = targetWidth;
+          let sourceHeight = targetHeight;
+
+          if (imageRatio > screenRatio) {
+            // La imagen es más ancha que la pantalla -> recortar lados (izquierda y derecha)
+            sourceWidth = targetHeight * screenRatio;
+            sourceX = (targetWidth - sourceWidth) / 2;
+          } else if (imageRatio < screenRatio) {
+            // La imagen es más alta que la pantalla -> recortar arriba y abajo
+            sourceHeight = targetWidth / screenRatio;
+            sourceY = (targetHeight - sourceHeight) / 2;
+          }
+
+          let drawWidth = sourceWidth;
+          let drawHeight = sourceHeight;
+
           const MAX_DIM = 2048;
-          if (targetWidth > MAX_DIM || targetHeight > MAX_DIM) {
-            if (targetWidth > targetHeight) {
-              targetHeight = Math.round((targetHeight * MAX_DIM) / targetWidth);
-              targetWidth = MAX_DIM;
+          if (drawWidth > MAX_DIM || drawHeight > MAX_DIM) {
+            if (drawWidth > drawHeight) {
+              drawHeight = Math.round((drawHeight * MAX_DIM) / drawWidth);
+              drawWidth = MAX_DIM;
             } else {
-              targetWidth = Math.round((targetWidth * MAX_DIM) / targetHeight);
-              targetHeight = MAX_DIM;
+              drawWidth = Math.round((drawWidth * MAX_DIM) / drawHeight);
+              drawHeight = MAX_DIM;
             }
           }
 
           const canvas = document.createElement('canvas');
-          canvas.width = targetWidth;
-          canvas.height = targetHeight;
+          canvas.width = drawWidth;
+          canvas.height = drawHeight;
           const ctx = canvas.getContext('2d');
           if (!ctx) return resolve(imageSrc);
 
-          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+          ctx.drawImage(
+            img,
+            sourceX, sourceY, sourceWidth, sourceHeight,
+            0, 0, drawWidth, drawHeight
+          );
 
           const position = metadata.settings?.overlayPosition || 'top-left';
           const fontSizeScale = metadata.settings?.fontSizeScale || 'medium';

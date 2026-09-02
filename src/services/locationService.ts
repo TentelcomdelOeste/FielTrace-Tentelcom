@@ -45,7 +45,6 @@ export const locationService = {
   },
 
   getCurrentState() {
-    // Only expose GPS if it is still fresh; otherwise UI/overlay show SIN GPS
     const gps = isFresh(currentGps) ? currentGps : null;
     return {
       gps,
@@ -53,7 +52,6 @@ export const locationService = {
     };
   },
 
-  /** Explicitly clear cached GPS (permission denied, location off, errors) */
   clearGps() {
     currentGps = null;
     currentLocationData = null;
@@ -61,36 +59,30 @@ export const locationService = {
   },
 
   async checkAndRequestPermissions(): Promise<boolean> {
-    if (Capacitor.isNativePlatform()) {
-      try {
-        const check = await Geolocation.checkPermissions();
-        if (check.location !== 'granted') {
-          const request = await Geolocation.requestPermissions();
-          if (request.location !== 'granted') {
-            this.clearGps();
-            return false;
-          }
-        }
-      } catch (e) {
-        console.warn('Error checking/requesting location permission:', e);
-        this.clearGps();
-        return false;
-      }
+    if (!Capacitor.isNativePlatform()) return true;
+    try {
+      const check = await Geolocation.checkPermissions();
+      if (check.location === 'granted') return true;
+      const request = await Geolocation.requestPermissions();
+      if (request.location === 'granted') return true;
+      this.clearGps();
+      return false;
+    } catch (e) {
+      console.warn('[GPS] Error checking/requesting location permission:', e);
+      this.clearGps();
+      return false;
     }
-    return true;
   },
 
   async getCurrentPosition() {
     try {
       const hasPermission = await this.checkAndRequestPermissions();
-      if (!hasPermission) {
-        this.clearGps();
-        return null;
-      }
+      if (!hasPermission) return null;
 
       const coordinates = await Geolocation.getCurrentPosition({
         enableHighAccuracy: true,
-        timeout: 10000
+        timeout: 10000,
+        maximumAge: 5000,
       });
       const gps = {
         lat: coordinates.coords.latitude,
@@ -102,13 +94,14 @@ export const locationService = {
       notifySubscribers();
       return gps;
     } catch (error) {
-      console.error('Error getting location', error);
-      this.clearGps();
+      console.warn('[GPS] Initial position unavailable:', error);
+      // Do not erase a still-valid last fix because a single location request
+      // can time out indoors while the watcher continues working.
+      if (!isFresh(currentGps)) this.clearGps();
       return null;
     }
   },
 
-  /** Returns fresh GPS or null (never stale coordinates) */
   async getFreshGps() {
     if (isFresh(currentGps)) return currentGps;
     return this.getCurrentPosition();
@@ -117,10 +110,7 @@ export const locationService = {
   async watchPosition(callback?: (pos: any) => void) {
     try {
       const hasPermission = await this.checkAndRequestPermissions();
-      if (!hasPermission) {
-        this.clearGps();
-        return null;
-      }
+      if (!hasPermission) return null;
 
       return await Geolocation.watchPosition({
         enableHighAccuracy: true,
@@ -128,10 +118,12 @@ export const locationService = {
         maximumAge: 5000
       }, async (position, err) => {
         if (err || !position) {
-          // Location turned off or error → clear so overlay shows SIN GPS
-          this.clearGps();
+          // A transient callback error must not immediately erase a good fix.
+          // The 90-second freshness guard handles genuinely stale coordinates.
+          if (!isFresh(currentGps)) notifySubscribers();
           return;
         }
+
         const gps = {
           lat: position.coords.latitude,
           lon: position.coords.longitude,
@@ -153,13 +145,13 @@ export const locationService = {
             lastGeocodeLat = gps.lat;
             lastGeocodeLon = gps.lon;
             lastGeocodeTime = now;
-            this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
+            void this.reverseGeocodeAndUpdate(gps.lat, gps.lon);
           }
         }
       });
     } catch (e) {
-      console.warn('Could not start watchPosition:', e);
-      this.clearGps();
+      console.warn('[GPS] Could not start watchPosition:', e);
+      if (!isFresh(currentGps)) this.clearGps();
       return null;
     }
   },
@@ -176,9 +168,7 @@ export const locationService = {
   async clearWatch(id: string) {
     try {
       await Geolocation.clearWatch({ id });
-    } catch (e) {
-      // ignore
-    }
+    } catch (_) {}
   },
 
   async reverseGeocode(lat: number, lon: number): Promise<any> {

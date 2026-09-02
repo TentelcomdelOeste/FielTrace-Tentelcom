@@ -8,6 +8,8 @@ import android.net.Uri;
 import android.database.Cursor;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.View;
+import android.view.Window;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -23,19 +25,44 @@ public class MainActivity extends BridgeActivity {
   @Override
   public void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
+    applyCameraSystemBarsFixes();
     applyCameraWebViewFixes();
   }
 
   @Override
   public void onStart() {
     super.onStart();
+    applyCameraSystemBarsFixes();
     applyCameraWebViewFixes();
   }
 
   @Override
   public void onResume() {
     super.onResume();
+    applyCameraSystemBarsFixes();
     applyCameraWebViewFixes();
+  }
+
+  private void applyCameraSystemBarsFixes() {
+    try {
+      Window window = getWindow();
+      window.setStatusBarColor(Color.TRANSPARENT);
+      window.setNavigationBarColor(Color.TRANSPARENT);
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        window.setStatusBarContrastEnforced(false);
+        window.setNavigationBarContrastEnforced(false);
+      }
+
+      // Make the Capacitor content area extend behind the Android status/navigation
+      // bars. Without this, CameraPreview starts below the status bar and leaves a
+      // full-width gray strip at the top of the camera screen.
+      View decor = window.getDecorView();
+      decor.setSystemUiVisibility(
+          View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+              | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+              | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+      );
+    } catch (Exception ignored) {}
   }
 
   private void applyCameraWebViewFixes() {
@@ -169,7 +196,6 @@ public class MainActivity extends BridgeActivity {
       intent.addCategory(Intent.CATEGORY_DEFAULT);
       intent.setDataAndType(uri, "image/jpeg");
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-      // Do not request persistable permission for FileProvider URIs.
       return startPreferred(intent);
     }
 

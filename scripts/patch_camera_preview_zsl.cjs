@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
-import path from 'node:path';
+const fs = require('node:fs');
+const path = require('node:path');
 
 const file = path.join(
   process.cwd(),

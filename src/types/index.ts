@@ -85,9 +85,14 @@ export interface Evidence {
   fecha: string;
   hora: string;
   timestamp: number;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   gpsAccuracy?: number;
+  gpsAltitude?: number | null;
+  gpsSpeed?: number | null;
+  gpsHeading?: number | null;
+  gpsSource?: 'live' | 'cache' | 'none';
+  gpsLabel?: string;
   gpsCapturedAt?: Date;
   ubicacion: string;
   baseFields: BaseFields;

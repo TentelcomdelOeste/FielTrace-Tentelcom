@@ -276,9 +276,6 @@ export default function App() {
   useEffect(() => {
     if (currentStep !== 'camera') return;
     let active = true;
-    // Iniciar rastreo continuo y forzar lectura de posición fresca al abrir la cámara
-    void locationService.startWatching();
-    void locationService.getCurrentPosition();
 
     (async () => {
       try {
@@ -470,27 +467,34 @@ export default function App() {
       const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
 
-      // Liberar obturador instantáneamente
+      // Liberar obturador instantáneamente tras la toma física del sensor
       setIsProcessing(false);
 
-      // Obtener coordenada fresca o fallback en caché
-      const freshGps = await locationService.getFreshGps();
-      const { gps: stateGps, locationData, isLive } = locationService.getCurrentState();
-      const activeGps = freshGps || stateGps;
-      const hasGps = !!(activeGps && activeGps.lat != null && activeGps.lon != null);
-      const isActualLive = activeGps?.source === 'live' || (isLive && activeGps === freshGps);
+      const capturedAt = new Date();
+      const timestamp = capturedAt.getTime();
+
+      // 1. Obtener de forma 100% síncrona en memoria la última ubicación válida conocida (0ms, sin esperas satelitales)
+      const lastLoc = locationService.getLastKnownLocation(timestamp);
+      const hasGps = !!(lastLoc && lastLoc.lat != null && lastLoc.lon != null);
+      const isActualLive = hasGps && (lastLoc!.source === 'live');
       const gpsLabel = hasGps
-        ? (isActualLive ? `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)}` : `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)} (CACHÉ)`)
+        ? (isActualLive ? `${lastLoc!.lat.toFixed(6)}, ${lastLoc!.lon.toFixed(6)}` : `${lastLoc!.lat.toFixed(6)}, ${lastLoc!.lon.toFixed(6)} (CACHÉ)`)
         : 'SIN GPS';
-      const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
+
+      // 2. Obtener dirección actual en memoria de forma 100% síncrona (0ms)
+      const addressData = locationService.getCurrentAddress();
+      const currentFormattedLocation = getFormattedLocationText(addressData, selectedProject);
       const ubicacionText = hasGps && currentFormattedLocation && currentFormattedLocation !== "Buscando..."
         ? currentFormattedLocation
         : (hasGps ? "Pendiente de geocodificación" : "");
 
+      // Si hay GPS pero aún no había dirección disponible, disparar geocodificación en segundo plano sin bloquear
+      if (hasGps && (!addressData || currentFormattedLocation === "Buscando...")) {
+        void locationService.reverseGeocodeAndUpdate(lastLoc!.lat, lastLoc!.lon);
+      }
+
       const uuid = crypto.randomUUID ? crypto.randomUUID() : 'ev_' + Date.now() + Math.random().toString(36).substr(2, 9);
       const fileName = `FT_${uuid}.jpg`;
-      const capturedAt = new Date();
-      const timestamp = capturedAt.getTime();
       const fecha = capturedAt.toLocaleDateString('es-ES');
       const hora = capturedAt.toLocaleTimeString('es-ES', { hour: 'numeric', minute: '2-digit', hour12: true });
 
@@ -516,11 +520,14 @@ export default function App() {
         fecha,
         hora,
         timestamp,
-        latitude: hasGps ? activeGps!.lat : null,
-        longitude: hasGps ? activeGps!.lon : null,
-        gpsAccuracy: hasGps ? activeGps!.accuracy : undefined,
+        latitude: hasGps ? lastLoc!.lat : null,
+        longitude: hasGps ? lastLoc!.lon : null,
+        gpsAccuracy: hasGps ? lastLoc!.accuracy : undefined,
+        gpsAltitude: hasGps ? lastLoc!.altitude : undefined,
+        gpsSpeed: hasGps ? lastLoc!.speed : undefined,
+        gpsHeading: hasGps ? lastLoc!.heading : undefined,
         gpsSource: hasGps ? (isActualLive ? 'live' : 'cache') : 'none',
-        gpsCapturedAt: hasGps ? capturedAt : undefined,
+        gpsCapturedAt: hasGps ? new Date(lastLoc!.timestamp) : undefined,
         gpsLabel,
         ubicacion: ubicacionText,
         baseFields: { 

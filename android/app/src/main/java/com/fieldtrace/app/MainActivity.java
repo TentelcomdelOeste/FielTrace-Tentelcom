@@ -3,18 +3,21 @@ package com.fieldtrace.app;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
-import android.net.Uri;
-import android.content.ContentUris;
-import android.database.Cursor;
 import android.graphics.Color;
-import android.provider.MediaStore;
-import android.os.Bundle;
+import android.net.Uri;
+import android.database.Cursor;
 import android.os.Build;
+import android.os.Bundle;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.provider.MediaStore;
+import android.content.ContentUris;
+import android.media.MediaScannerConnection;
+import androidx.core.content.FileProvider;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
+import java.io.File;
 
 public class MainActivity extends BridgeActivity {
   @Override
@@ -69,22 +72,33 @@ public class MainActivity extends BridgeActivity {
         openGallery();
         return;
       }
+
+      String raw = uriString.trim();
       try {
-        Uri uri = resolveImageContentUri(uriString.trim());
-        launchViewer(uri);
-      } catch (Exception ignored) {
-        // Never send an absolute file path to ACTION_VIEW: that can trigger
-        // Android's generic "Abrir con" chooser. Fall back to MediaStore/gallery.
-        try {
-          String raw = uriString.trim();
-          String fileName = raw.contains("/") ? raw.substring(raw.lastIndexOf('/') + 1) : raw;
-          if (!fileName.isEmpty()) {
-            openByFileName(fileName);
-            return;
-          }
-        } catch (Exception ignoredAgain) {}
-        openGallery();
-      }
+        Uri parsed = Uri.parse(raw);
+        if ("content".equalsIgnoreCase(parsed.getScheme())) {
+          if (launchViewer(parsed)) return;
+        }
+      } catch (Exception ignored) {}
+
+      String path = raw;
+      try {
+        Uri parsed = Uri.parse(raw);
+        if ("file".equalsIgnoreCase(parsed.getScheme()) && parsed.getPath() != null) {
+          path = parsed.getPath();
+        }
+      } catch (Exception ignored) {}
+
+      try {
+        Uri mediaUri = resolveImageContentUri(path);
+        if (launchViewer(mediaUri)) return;
+      } catch (Exception ignored) {}
+
+      // The Media plugin saves into Android's external-media directory and
+      // asks the system media scanner to index the file. That indexing can be
+      // asynchronous, so scan it again here and open the URI returned by the
+      // scanner instead of guessing a MediaStore row.
+      scanAndOpen(path);
     }
 
     @JavascriptInterface
@@ -93,33 +107,69 @@ public class MainActivity extends BridgeActivity {
         openGallery();
         return;
       }
+      String name = fileName.trim();
+      if (!name.contains(".")) name = name + ".jpg";
       try {
-        String name = fileName.trim();
-        if (!name.contains(".")) name = name + ".jpg";
-        String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME };
-        String selection = MediaStore.Images.Media.DISPLAY_NAME + "=?";
-        String[] args = new String[]{ name };
-        String sort = MediaStore.Images.Media.DATE_ADDED + " DESC";
-        try (Cursor cursor = getContentResolver().query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, args, sort)) {
-          if (cursor != null && cursor.moveToFirst()) {
-            long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-            launchViewer(ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id));
-            return;
-          }
-        }
+        Uri uri = queryByDisplayName(name);
+        if (uri != null && launchViewer(uri)) return;
+      } catch (Exception ignored) {}
+      openGallery();
+    }
 
-        String base = name.replaceAll("\\.[^.]+$", "");
-        selection = MediaStore.Images.Media.DISPLAY_NAME + " LIKE ?";
-        args = new String[]{ base + "%" };
-        try (Cursor cursor = getContentResolver().query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, args, sort)) {
-          if (cursor != null && cursor.moveToFirst()) {
-            long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-            launchViewer(ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id));
-            return;
-          }
+    private Uri queryByDisplayName(String name) {
+      String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME };
+      String sort = MediaStore.Images.Media.DATE_ADDED + " DESC";
+      try (Cursor cursor = getContentResolver().query(
+          MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+          projection,
+          MediaStore.Images.Media.DISPLAY_NAME + "=?",
+          new String[]{ name },
+          sort)) {
+        if (cursor != null && cursor.moveToFirst()) {
+          long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+          return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
         }
+      }
+      return null;
+    }
+
+    private void scanAndOpen(String path) {
+      try {
+        File file = new File(path);
+        if (!file.exists() || !file.isFile()) {
+          openGallery();
+          return;
+        }
+        final String scanPath = file.getAbsolutePath();
+        MediaScannerConnection.scanFile(this@MainActivity(), new String[]{scanPath}, new String[]{"image/jpeg"},
+            (scannedPath, uri) -> runOnUiThread(() -> {
+              if (uri != null && launchViewer(uri)) return;
+              openWithFileProvider(scanPath);
+            }));
+      } catch (Exception ignored) {
+        openWithFileProvider(path);
+      }
+    }
+
+    // Helper only to keep the MediaScannerConnection call unambiguous inside
+    // the inner Javascript bridge class.
+    private MainActivity this@MainActivity() {
+      return MainActivity.this;
+    }
+
+    private void openWithFileProvider(String path) {
+      try {
+        File file = new File(path);
+        if (!file.exists()) {
+          openGallery();
+          return;
+        }
+        Uri uri = FileProvider.getUriForFile(
+            MainActivity.this,
+            getPackageName() + ".fileprovider",
+            file
+        );
+        if (launchViewer(uri)) return;
       } catch (Exception ignored) {}
       openGallery();
     }
@@ -135,23 +185,20 @@ public class MainActivity extends BridgeActivity {
         "com.google.android.gallery3d"
     };
 
-    private void launchViewer(Uri uri) {
+    private boolean launchViewer(Uri uri) {
       if (uri == null || uri.getScheme() == null || !"content".equalsIgnoreCase(uri.getScheme())) {
-        openGallery();
-        return;
+        return false;
       }
 
       Intent intent = new Intent(Intent.ACTION_VIEW);
       intent.addCategory(Intent.CATEGORY_DEFAULT);
       intent.setDataAndType(uri, "image/*");
-      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
         intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
       }
 
-      if (startPreferred(intent)) return;
-      openGallery();
+      return startPreferred(intent);
     }
 
     private boolean startPreferred(Intent template) {
@@ -186,33 +233,6 @@ public class MainActivity extends BridgeActivity {
           projection,
           MediaStore.Images.Media.DATA + "=?",
           new String[]{ path },
-          null)) {
-        if (cursor != null && cursor.moveToFirst()) {
-          long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-          return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-        }
-      } catch (Exception ignored) {}
-
-      try {
-        String fileName = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
-        try (Cursor cursor = getContentResolver().query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            MediaStore.Images.Media.DISPLAY_NAME + "=?",
-            new String[]{ fileName },
-            MediaStore.Images.Media.DATE_ADDED + " DESC")) {
-          if (cursor != null && cursor.moveToFirst()) {
-            long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-            return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-          }
-        }
-      } catch (Exception ignored) {}
-
-      try (Cursor cursor = getContentResolver().query(
-          MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-          projection,
-          MediaStore.Images.Media.DATA + " LIKE ?",
-          new String[]{ "%" + path },
           MediaStore.Images.Media.DATE_ADDED + " DESC")) {
         if (cursor != null && cursor.moveToFirst()) {
           long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
@@ -220,25 +240,29 @@ public class MainActivity extends BridgeActivity {
         }
       } catch (Exception ignored) {}
 
-      throw new IllegalArgumentException("Image not found in MediaStore: " + path);
+      String fileName = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
+      Uri byName = queryByDisplayName(fileName);
+      if (byName != null) return byName;
+      throw new IllegalArgumentException("Image not indexed: " + path);
     }
 
     @JavascriptInterface
     public void openGallery() {
+      // Open the gallery app itself first. Do not send the generic image
+      // collection URI to Google Photos because some versions show an error
+      // placeholder for that URI.
+      Intent galleryApp = new Intent(Intent.ACTION_MAIN);
+      galleryApp.addCategory(Intent.CATEGORY_APP_GALLERY);
+      galleryApp.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      if (startPreferred(galleryApp)) return;
+
       Intent viewImages = new Intent(Intent.ACTION_VIEW);
       viewImages.addCategory(Intent.CATEGORY_DEFAULT);
       viewImages.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*");
       viewImages.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
       if (startPreferred(viewImages)) return;
 
-      Intent galleryApp = new Intent(Intent.ACTION_MAIN);
-      galleryApp.addCategory(Intent.CATEGORY_APP_GALLERY);
-      galleryApp.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-      if (startPreferred(galleryApp)) return;
-
-      try {
-        startActivity(galleryApp);
-      } catch (Exception ignored) {
+      try { startActivity(galleryApp); } catch (Exception ignored) {
         try { startActivity(viewImages); } catch (Exception ignoredAgain) {}
       }
     }

@@ -48,34 +48,41 @@ jobs:
           pkg = json.loads(Path('package.json').read_text())
           main = Path('android/app/src/main/java/com/fieldtrace/app/MainActivity.java')
           main_txt = main.read_text() if main.exists() else ''
-          combined = app + cam_screen
           checks = {
             'App.tsx is real source (not placeholder)': 'export default function App' in app and 'RESTORING_FROM_LOCAL' not in app and len(app) > 5000,
             'camera content uses hidden not invisible': "currentStep === 'camera' ? 'hidden'" in app,
             'Campos Operativos modal': 'Campos Operativos' in app and 'showQuickConfig' in app,
             'CameraPreview dependency': '@capgo/camera-preview' in pkg.get('dependencies', {}),
-            'native camera start': 'CameraPreview.start' in combined,
-            'native capture': 'CameraPreview.capture' in combined,
-            'native zoom': 'CameraPreview.setZoom' in combined,
-            'native flash': 'CameraPreview.setFlashMode' in combined,
-            'torch support': "'torch'" in cam_screen or 'torch' in cam_screen,
+            'native camera start': 'CameraPreview.start' in cam_screen,
+            'camera requests permission': 'CameraPreview.requestPermissions' in cam_screen,
+            'camera uses full-screen fill': "aspectRatio: 'fill'" in cam_screen and "setAspectRatio({ aspectRatio: 'fill'" in cam_screen,
+            'camera does not force 4:3 dimensions': 'width: window.innerWidth' not in cam_screen and 'height: window.innerHeight' not in cam_screen,
+            'native capture': 'CameraPreview.capture' in app,
+            'native zoom': 'CameraPreview.setZoom' in cam_screen,
+            'native flash': 'CameraPreview.setFlashMode' in cam_screen,
+            'torch support': 'torch' in cam_screen,
             'gear is a plain button': 'aria-label="Campos operativos"' in cam_screen and 'dragMomentum' not in cam_screen,
-            'camera start spinner': 'starting' in cam_screen,
+            'camera start error state': 'cameraError' in cam_screen and 'Reintentar cámara' in cam_screen,
             'overlay': 'drawOverlay' in app or 'drawOverlay' in cam,
             'gallery save': 'saveToGallery' in app,
             'Field Trace album': 'Field Trace' in cam and 'Media.savePhoto' in cam,
             'rememberSaved path': 'rememberSaved' in cam or 'extractSavedPath' in cam,
             'native gallery bridge': 'FieldTraceNative' in main_txt,
             'openByFileName': 'openByFileName' in main_txt,
+            'content URI resolution': 'resolveImageContentUri' in main_txt,
+            'no raw path ACTION_VIEW': 'Uri.parse(uriString.trim())' not in main_txt,
             'preferred gallery packages': 'PREFERRED_GALLERY_PACKAGES' in main_txt and 'com.google.android.apps.photos' in main_txt,
           }
           failed = [k for k, v in checks.items() if not v]
           if failed:
             raise SystemExit('SOURCE VERIFICATION FAILED: ' + ', '.join(failed))
           print('SOURCE VERIFICATION PASSED')
-          for k, v in checks.items():
+          for k in checks:
             print(f'  OK {k}')
           PY
+
+      - name: TypeScript lint
+        run: npm run lint
 
       - name: Build web app
         run: npm run build
@@ -90,7 +97,6 @@ jobs:
 
       - name: Restore MainActivity after cap sync if needed
         run: |
-          # cap sync must not wipe our FieldTraceNative bridge
           if ! grep -q 'openByFileName' android/app/src/main/java/com/fieldtrace/app/MainActivity.java 2>/dev/null; then
             echo "MainActivity missing openByFileName after sync — checking out from branch"
             git checkout HEAD -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java || true

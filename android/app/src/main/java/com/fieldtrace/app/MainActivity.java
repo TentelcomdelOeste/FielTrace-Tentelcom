@@ -59,11 +59,6 @@ public class MainActivity extends BridgeActivity {
           return bitmap;
         }
       });
-      webView.post(() -> {
-        try {
-          webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
-        } catch (Exception ignored) {}
-      });
     } catch (Exception ignored) {}
   }
 
@@ -77,13 +72,18 @@ public class MainActivity extends BridgeActivity {
       try {
         Uri uri = resolveImageContentUri(uriString.trim());
         launchViewer(uri);
-      } catch (Exception e1) {
+      } catch (Exception ignored) {
+        // Never send an absolute file path to ACTION_VIEW: that can trigger
+        // Android's generic "Abrir con" chooser. Fall back to MediaStore/gallery.
         try {
-          Uri parsed = Uri.parse(uriString.trim());
-          launchViewer(parsed);
-        } catch (Exception e2) {
-          openGallery();
-        }
+          String raw = uriString.trim();
+          String fileName = raw.contains("/") ? raw.substring(raw.lastIndexOf('/') + 1) : raw;
+          if (!fileName.isEmpty()) {
+            openByFileName(fileName);
+            return;
+          }
+        } catch (Exception ignoredAgain) {}
+        openGallery();
       }
     }
 
@@ -104,11 +104,11 @@ public class MainActivity extends BridgeActivity {
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, args, sort)) {
           if (cursor != null && cursor.moveToFirst()) {
             long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-            Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-            launchViewer(uri);
+            launchViewer(ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id));
             return;
           }
         }
+
         String base = name.replaceAll("\\.[^.]+$", "");
         selection = MediaStore.Images.Media.DISPLAY_NAME + " LIKE ?";
         args = new String[]{ base + "%" };
@@ -116,8 +116,7 @@ public class MainActivity extends BridgeActivity {
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, args, sort)) {
           if (cursor != null && cursor.moveToFirst()) {
             long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-            Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-            launchViewer(uri);
+            launchViewer(ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id));
             return;
           }
         }
@@ -137,19 +136,22 @@ public class MainActivity extends BridgeActivity {
     };
 
     private void launchViewer(Uri uri) {
+      if (uri == null || uri.getScheme() == null || !"content".equalsIgnoreCase(uri.getScheme())) {
+        openGallery();
+        return;
+      }
+
       Intent intent = new Intent(Intent.ACTION_VIEW);
+      intent.addCategory(Intent.CATEGORY_DEFAULT);
       intent.setDataAndType(uri, "image/*");
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
       intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
         intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
       }
+
       if (startPreferred(intent)) return;
-      try {
-        startActivity(intent);
-      } catch (Exception ignored) {
-        openGallery();
-      }
+      openGallery();
     }
 
     private boolean startPreferred(Intent template) {
@@ -169,26 +171,35 @@ public class MainActivity extends BridgeActivity {
     private Uri resolveImageContentUri(String uriString) {
       Uri parsed = Uri.parse(uriString);
       if ("content".equalsIgnoreCase(parsed.getScheme())) return parsed;
+
       String path = "file".equalsIgnoreCase(parsed.getScheme()) ? parsed.getPath() : uriString;
       if (path == null) path = uriString;
+
       String[] projection = {
           MediaStore.Images.Media._ID,
           MediaStore.Images.Media.DATA,
           MediaStore.Images.Media.DISPLAY_NAME
       };
+
       try (Cursor cursor = getContentResolver().query(
-          MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection,
-          MediaStore.Images.Media.DATA + "=?", new String[]{ path }, null)) {
+          MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+          projection,
+          MediaStore.Images.Media.DATA + "=?",
+          new String[]{ path },
+          null)) {
         if (cursor != null && cursor.moveToFirst()) {
           long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
           return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
         }
       } catch (Exception ignored) {}
+
       try {
         String fileName = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
         try (Cursor cursor = getContentResolver().query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection,
-            MediaStore.Images.Media.DISPLAY_NAME + "=?", new String[]{ fileName },
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            projection,
+            MediaStore.Images.Media.DISPLAY_NAME + "=?",
+            new String[]{ fileName },
             MediaStore.Images.Media.DATE_ADDED + " DESC")) {
           if (cursor != null && cursor.moveToFirst()) {
             long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
@@ -196,23 +207,26 @@ public class MainActivity extends BridgeActivity {
           }
         }
       } catch (Exception ignored) {}
-      try {
-        try (Cursor cursor = getContentResolver().query(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection,
-            MediaStore.Images.Media.DATA + " LIKE ?", new String[]{ "%" + path },
-            MediaStore.Images.Media.DATE_ADDED + " DESC")) {
-          if (cursor != null && cursor.moveToFirst()) {
-            long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-            return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-          }
+
+      try (Cursor cursor = getContentResolver().query(
+          MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+          projection,
+          MediaStore.Images.Media.DATA + " LIKE ?",
+          new String[]{ "%" + path },
+          MediaStore.Images.Media.DATE_ADDED + " DESC")) {
+        if (cursor != null && cursor.moveToFirst()) {
+          long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+          return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
         }
       } catch (Exception ignored) {}
+
       throw new IllegalArgumentException("Image not found in MediaStore: " + path);
     }
 
     @JavascriptInterface
     public void openGallery() {
       Intent viewImages = new Intent(Intent.ACTION_VIEW);
+      viewImages.addCategory(Intent.CATEGORY_DEFAULT);
       viewImages.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*");
       viewImages.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
       if (startPreferred(viewImages)) return;
@@ -224,11 +238,9 @@ public class MainActivity extends BridgeActivity {
 
       try {
         startActivity(galleryApp);
-        return;
-      } catch (Exception ignored) {}
-      try {
-        startActivity(viewImages);
-      } catch (Exception ignored) {}
+      } catch (Exception ignored) {
+        try { startActivity(viewImages); } catch (Exception ignoredAgain) {}
+      }
     }
   }
 }

@@ -181,7 +181,7 @@ const EvidenceImage = memo(({ photoId, className }: { photoId: string, className
   if (!url) return <div ref={imgRef} className={`${className} bg-gray-100 flex items-center justify-center`}><RefreshCcw className="w-5 h-5 text-gray-300 animate-spin" /></div>;
   return <img ref={imgRef as any} src={url} className={className} alt="Evidencia" />;
 });
-import Webcam from 'react-webcam';
+import { CameraPreview } from '@capgo/camera-preview';
 import confetti from 'canvas-confetti';
 import { motion, AnimatePresence } from 'framer-motion';
 import { storageService } from './services/storageService';
@@ -222,78 +222,34 @@ export default function App() {
   const [filterTech, setFilterTech] = useState<string>("");
   const [filterField, setFilterField] = useState<string>("");
 
-  const webcamRef = useRef<Webcam>(null);
-
-  const applyTorch = async (on: boolean) => {
-    try {
-      const video = webcamRef.current?.video as HTMLVideoElement | undefined;
-      const stream = video?.srcObject as MediaStream | null;
-      const track = stream?.getVideoTracks?.()[0];
-      if (!track) return;
-      const caps = track.getCapabilities?.() as any;
-      if (caps && 'torch' in caps) {
-        await track.applyConstraints({ advanced: [{ torch: on } as any] });
-      }
-    } catch (e) {
-      console.warn('Torch not supported', e);
-    }
+  const applyNativeZoom = async (level: number) => {
+    const next = Math.max(1, Math.min(8, Math.round(level * 10) / 10));
+    setCameraZoom(next);
+    try { await CameraPreview.setZoom({ level: next }); } catch (error) { console.warn('[Camera] zoom:', error); }
   };
-
-  const cycleZoom = () => {
-    setCameraZoom((z) => (z >= 3 ? 1 : z >= 2 ? 3 : 2));
-  };
-
-  const onCameraTouchStart = (e: React.TouchEvent) => {
-    if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      pinchStartDist.current = Math.hypot(dx, dy);
-      pinchStartZoom.current = cameraZoom;
-    }
-  };
-
-  const onCameraTouchMove = (e: React.TouchEvent) => {
-    if (e.touches.length === 2 && pinchStartDist.current) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.hypot(dx, dy);
-      const scale = dist / pinchStartDist.current;
-      let next = pinchStartZoom.current * scale;
-      next = Math.max(1, Math.min(4, next));
-      setCameraZoom(Math.round(next * 10) / 10);
-    }
-  };
-
-  const onCameraTouchEnd = () => {
-    pinchStartDist.current = null;
-  };
-
-  // Force play when entering camera (Android WebView)
+  const cycleZoom = () => { const next = cameraZoom >= 3 ? 1 : cameraZoom >= 2 ? 3 : 2; void applyNativeZoom(next); };
+  const onCameraTouchStart = (e: TouchEvent) => { if (e.touches.length===2) { const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY; pinchStartDist.current=Math.hypot(dx,dy); pinchStartZoom.current=cameraZoom; } };
+  const onCameraTouchMove = (e: TouchEvent) => { if (e.touches.length===2 && pinchStartDist.current) { const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY; void applyNativeZoom(Math.max(1,Math.min(8,pinchStartZoom.current*(Math.hypot(dx,dy)/pinchStartDist.current)))); } };
+  const onCameraTouchEnd = () => { pinchStartDist.current=null; };
   useEffect(() => {
     if (currentStep !== 'camera') return;
-    const forcePlay = () => {
-      const video = webcamRef.current?.video;
-      if (!video) return;
-      video.muted = true;
-      video.playsInline = true;
-      video.setAttribute('playsinline', 'true');
-      video.setAttribute('webkit-playsinline', 'true');
-      video.removeAttribute('controls');
-      void video.play().catch(() => {});
-    };
-    forcePlay();
-    const t1 = setTimeout(forcePlay, 80);
-    const t2 = setTimeout(forcePlay, 300);
-    const t3 = setTimeout(forcePlay, 800);
-    const iv = setInterval(forcePlay, 600);
-    const onPointer = () => forcePlay();
-    window.addEventListener('pointerdown', onPointer, { once: true });
-    return () => {
-      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearInterval(iv);
-      window.removeEventListener('pointerdown', onPointer);
-    };
+    let active=true;
+    (async () => { try {
+      await CameraPreview.start({ position:'rear', toBack:true, aspectMode:'cover', width:window.innerWidth, height:window.innerHeight, storeToFile:false, disableAudio:true, initialZoomLevel:1, rotateWhenOrientationChanged:true });
+      if (!active) return;
+      await CameraPreview.setFlashMode({ flashMode });
+      await CameraPreview.setZoom({ level: cameraZoom });
+    } catch (error) { console.error('[Camera] start:',error); } })();
+    return () => { active=false; void CameraPreview.stop({ force:true }).catch((error)=>console.warn('[Camera] stop:',error)); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep]);
+  useEffect(() => { if (currentStep !== 'camera') return; void CameraPreview.setFlashMode({ flashMode }).catch((error)=>console.warn('[Camera] flash:',error)); }, [flashMode,currentStep]);
 
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('native-camera-active', currentStep === 'camera');
+    return () => document.documentElement.classList.remove('native-camera-active');
+  }, [currentStep]);
 
   useEffect(() => {
     loadData();
@@ -437,18 +393,10 @@ export default function App() {
     setIsProcessing(true);
     
     try {
-      if (!webcamRef.current) {
-        setIsProcessing(false);
-        return;
-      }
-
-      const rawImage = webcamRef.current.getScreenshot();
-
-      if (!rawImage) {
-        console.error('No se pudo capturar la imagen');
-        setIsProcessing(false);
-        return;
-      }
+      const captureResult = await CameraPreview.capture({ quality:90, format:'jpeg' });
+      const capturedValue = captureResult?.value;
+      const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
+      if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
 
       // Feedback visual rápido INMEDIATO
       const pulse = document.getElementById('camera-pulse');
@@ -572,9 +520,9 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex flex-col font-sans">
+    <div className={`min-h-screen ${currentStep === 'camera' ? 'bg-transparent' : 'bg-white'} flex flex-col font-sans`}>
       {/* Main Content Viewport */}
-      <div className="flex-1 flex flex-col relative overflow-hidden">
+      <div className={`flex-1 flex flex-col relative overflow-hidden ${currentStep === 'camera' ? 'invisible' : ''}`}>
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto px-6 py-8 no-scrollbar">
           <AnimatePresence mode="wait">
@@ -760,55 +708,11 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="absolute inset-0 bg-black z-50 flex flex-col"
+                className="absolute inset-0 bg-transparent z-50 flex flex-col"
               >
                 {/* Real-time Camera Bridge */}
-                <div className="relative flex-1 bg-gray-950 overflow-hidden">
-                  <Webcam
-                    audio={false}
-                    ref={webcamRef}
-                    screenshotFormat="image/jpeg"
-                    videoConstraints={{
-                      facingMode: { ideal: "environment" },
-                      width: { ideal: 1920 },
-                      height: { ideal: 1080 }
-                    }}
-                    className="w-full h-full object-cover camera-preview-video"
-                    style={{ transform: `scale(${cameraZoom})`, transformOrigin: 'center center' }}
-                    mirrored={false}
-                    forceScreenshotSourceSize={true}
-                    imageSmoothing={true}
-                    disablePictureInPicture={true}
-                    screenshotQuality={0.92}
-                    onUserMedia={() => {
-                      console.log('Camera ready');
-                      const forcePlay = () => {
-                        const video = webcamRef.current?.video;
-                        if (!video) return;
-                        video.muted = true;
-                        video.playsInline = true;
-                        video.setAttribute('playsinline', 'true');
-                        video.setAttribute('webkit-playsinline', 'true');
-                        video.removeAttribute('controls');
-                        void video.play().catch(() => {});
-                      };
-                      forcePlay();
-                      requestAnimationFrame(forcePlay);
-                      setTimeout(forcePlay, 100);
-                      setTimeout(forcePlay, 400);
-                    }}
-                    onLoadedMetadata={(event) => {
-                      const video = event.currentTarget;
-                      video.muted = true;
-                      video.setAttribute('playsinline', 'true');
-                      void video.play().catch((err) => console.warn('Camera autoplay:', err));
-                    }}
-                    autoPlay
-                    muted
-                    playsInline
-                    controls={false}
-                    onUserMediaError={(err) => console.error('Camera error', err)}
-                  />
+                <div className="relative flex-1 bg-transparent overflow-hidden" onTouchStart={onCameraTouchStart} onTouchMove={onCameraTouchMove} onTouchEnd={onCameraTouchEnd}>
+                  <div className="absolute inset-0 bg-transparent pointer-events-none" aria-hidden="true" />
                   
                   {/* Flash Feedback Layer */}
                   <div id="camera-pulse" className="absolute inset-0 pointer-events-none transition-colors duration-100"></div>
@@ -894,9 +798,7 @@ export default function App() {
                     <button
                       type="button"
                       onClick={async () => {
-                        const next = flashMode === 'off' ? 'on' : 'off';
-                        setFlashMode(next);
-                        await applyTorch(next === 'on');
+                        const next = flashMode === 'off' ? 'on' : 'off'; setFlashMode(next); await CameraPreview.setFlashMode({ flashMode: next }).catch((error) => console.warn('[Camera] flash:', error));
                       }}
                       className="w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white active:scale-95"
                       title="Flash"
@@ -917,7 +819,7 @@ export default function App() {
 
                 {/* Shutter Bar */}
                 <div className="h-[120px] bg-black flex items-center justify-between px-8 shrink-0">
-                  <button onClick={() => { setCameraZoom(1); setFlashMode('off'); void applyTorch(false); setCurrentStep('history'); }} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
+                  <button onClick={() => { setCameraZoom(1); setFlashMode('off'); setCurrentStep('history'); }} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
                     <ArrowLeft className="w-6 h-6"/>
                   </button>
                   
@@ -934,8 +836,7 @@ export default function App() {
                   <button 
                     type="button"
                     onClick={() => {
-                      if (lastImage) setShowLastImage(true);
-                      void cameraService.openFieldTraceAlbum();
+                      void cameraService.openFieldTraceAlbum(true);
                     }} 
                     className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95"
                   >

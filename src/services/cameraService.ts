@@ -4,7 +4,6 @@
  * Gallery save via @capacitor-community/media -> album Field Trace
  */
 
-import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Media } from '@capacitor-community/media';
 import { Capacitor } from '@capacitor/core';
 
@@ -13,17 +12,6 @@ let _lastSavedPath: string | null = null;
 const ALBUM_NAME = 'Field Trace';
 
 export const cameraService = {
-  async takePhoto() {
-    const image = await Camera.getPhoto({
-      quality: 90,
-      allowEditing: false,
-      resultType: CameraResultType.DataUrl,
-      source: CameraSource.Camera,
-      saveToGallery: false
-    });
-    return image.dataUrl;
-  },
-
   async drawOverlay(imageSrc: string, metadata: any): Promise<string> {
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {

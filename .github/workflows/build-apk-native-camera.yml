@@ -71,14 +71,27 @@ jobs:
       - name: Build web app
         run: npm run build
 
-      - name: Capacitor sync
-        run: npx cap sync android
+      - name: Ensure Android platform
+        run: |
+          if [ ! -f android/gradlew ] || [ ! -f android/settings.gradle ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Restore tracked native MainActivity after Capacitor sync
+        run: |
+          git checkout HEAD -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'resolveImageContentUri' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          echo 'Tracked native MainActivity restored'
 
       - name: Verify Android project
         run: |
           test -f android/gradlew
           test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'getDefaultVideoPoster' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'resolveImageContentUri' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
 
       - name: Prepare Gradle

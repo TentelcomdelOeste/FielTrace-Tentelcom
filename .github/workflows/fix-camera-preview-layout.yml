@@ -1,7 +1,9 @@
 name: Fix native camera preview layout
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - native-camera-gallery-fix
 
 jobs:
   fix-camera:

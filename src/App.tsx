@@ -233,14 +233,50 @@ export default function App() {
   const onCameraTouchEnd = () => { pinchStartDist.current=null; };
   useEffect(() => {
     if (currentStep !== 'camera') return;
-    let active=true;
-    (async () => { try {
-      await CameraPreview.start({ position:'rear', toBack:true, aspectMode:'cover', width:window.innerWidth, height:window.innerHeight, storeToFile:false, disableAudio:true, initialZoomLevel:1, rotateWhenOrientationChanged:true });
-      if (!active) return;
-      await CameraPreview.setFlashMode({ flashMode });
-      await CameraPreview.setZoom({ level: cameraZoom });
-    } catch (error) { console.error('[Camera] start:',error); } })();
-    return () => { active=false; void CameraPreview.stop({ force:true }).catch((error)=>console.warn('[Camera] stop:',error)); };
+    let active = true;
+    (async () => {
+      try {
+        const permission = await CameraPreview.requestPermissions({ disableAudio: true });
+        if (permission.camera !== 'granted') {
+          throw new Error(`Permiso de cámara no concedido: ${permission.camera}`);
+        }
+
+        await CameraPreview.start({
+          position: 'rear',
+          toBack: true,
+          aspectMode: 'cover',
+          width: window.screen.width,
+          height: window.screen.height,
+          x: 0,
+          y: 0,
+          storeToFile: false,
+          disableAudio: true,
+          initialZoomLevel: 1,
+          rotateWhenOrientationChanged: true
+        });
+
+        if (!active) return;
+
+        // Force the native preview to occupy the complete Android viewport.
+        // Some devices otherwise clamp the preview to the camera's 4:3 surface,
+        // leaving the lower part of the screen uncovered.
+        await CameraPreview.setPreviewSize({
+          x: 0,
+          y: 0,
+          width: window.screen.width,
+          height: window.screen.height
+        });
+        await CameraPreview.setFlashMode({ flashMode });
+        await CameraPreview.setZoom({ level: cameraZoom });
+      } catch (error) {
+        console.error('[Camera] start:', error);
+      }
+    })();
+
+    return () => {
+      active = false;
+      void CameraPreview.stop({ force: true }).catch((error) => console.warn('[Camera] stop:', error));
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep]);
   useEffect(() => { if (currentStep !== 'camera') return; void CameraPreview.setFlashMode({ flashMode }).catch((error)=>console.warn('[Camera] flash:',error)); }, [flashMode,currentStep]);
@@ -522,7 +558,7 @@ export default function App() {
   return (
     <div className={`min-h-screen ${currentStep === 'camera' ? 'bg-transparent' : 'bg-white'} flex flex-col font-sans`}>
       {/* Main Content Viewport */}
-      <div className={`flex-1 flex flex-col relative overflow-hidden ${currentStep === 'camera' ? 'invisible' : ''}`}>
+      <div className="flex-1 flex flex-col relative overflow-hidden">
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto px-6 py-8 no-scrollbar">
           <AnimatePresence mode="wait">

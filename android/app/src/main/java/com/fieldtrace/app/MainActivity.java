@@ -9,6 +9,7 @@ import android.database.Cursor;
 import android.graphics.Color;
 import android.provider.MediaStore;
 import android.os.Bundle;
+import android.os.Build;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -75,32 +76,108 @@ public class MainActivity extends BridgeActivity {
       }
       try {
         Uri uri = resolveImageContentUri(uriString.trim());
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setDataAndType(uri, "image/*");
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        startActivity(intent);
+        launchViewer(uri);
       } catch (Exception e1) {
         try {
-          Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriString.trim()));
-          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-          startActivity(intent);
+          Uri parsed = Uri.parse(uriString.trim());
+          launchViewer(parsed);
         } catch (Exception e2) {
           openGallery();
         }
       }
     }
 
-    private Uri resolveImageContentUri(String uriString) {
-      Uri parsed=Uri.parse(uriString);
-      if ("content".equalsIgnoreCase(parsed.getScheme())) return parsed;
-      String path="file".equalsIgnoreCase(parsed.getScheme()) ? parsed.getPath() : uriString;
-      String[] projection={MediaStore.Images.Media._ID,MediaStore.Images.Media.DATA};
-      try (Cursor cursor=getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,projection,MediaStore.Images.Media.DATA+"=?",new String[]{path},null)) {
-        if(cursor!=null && cursor.moveToFirst()) { long id=cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)); return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,id); }
+    @JavascriptInterface
+    public void openByFileName(String fileName) {
+      if (fileName == null || fileName.trim().isEmpty()) {
+        openGallery();
+        return;
       }
-      throw new IllegalArgumentException("Image not found in MediaStore: "+path);
+      try {
+        String name = fileName.trim();
+        if (!name.contains(".")) name = name + ".jpg";
+        String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DISPLAY_NAME };
+        String selection = MediaStore.Images.Media.DISPLAY_NAME + "=?";
+        String[] args = new String[]{ name };
+        String sort = MediaStore.Images.Media.DATE_ADDED + " DESC";
+        try (Cursor cursor = getContentResolver().query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, args, sort)) {
+          if (cursor != null && cursor.moveToFirst()) {
+            long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+            Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+            launchViewer(uri);
+            return;
+          }
+        }
+        String base = name.replaceAll("\\.[^.]+$", "");
+        selection = MediaStore.Images.Media.DISPLAY_NAME + " LIKE ?";
+        args = new String[]{ base + "%" };
+        try (Cursor cursor = getContentResolver().query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, selection, args, sort)) {
+          if (cursor != null && cursor.moveToFirst()) {
+            long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+            Uri uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+            launchViewer(uri);
+            return;
+          }
+        }
+      } catch (Exception ignored) {}
+      openGallery();
+    }
+
+    private void launchViewer(Uri uri) {
+      Intent intent = new Intent(Intent.ACTION_VIEW);
+      intent.setDataAndType(uri, "image/*");
+      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+      }
+      startActivity(intent);
+    }
+
+    private Uri resolveImageContentUri(String uriString) {
+      Uri parsed = Uri.parse(uriString);
+      if ("content".equalsIgnoreCase(parsed.getScheme())) return parsed;
+      String path = "file".equalsIgnoreCase(parsed.getScheme()) ? parsed.getPath() : uriString;
+      if (path == null) path = uriString;
+      String[] projection = {
+          MediaStore.Images.Media._ID,
+          MediaStore.Images.Media.DATA,
+          MediaStore.Images.Media.DISPLAY_NAME
+      };
+      try (Cursor cursor = getContentResolver().query(
+          MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection,
+          MediaStore.Images.Media.DATA + "=?", new String[]{ path }, null)) {
+        if (cursor != null && cursor.moveToFirst()) {
+          long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+          return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+        }
+      } catch (Exception ignored) {}
+      try {
+        String fileName = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
+        try (Cursor cursor = getContentResolver().query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection,
+            MediaStore.Images.Media.DISPLAY_NAME + "=?", new String[]{ fileName },
+            MediaStore.Images.Media.DATE_ADDED + " DESC")) {
+          if (cursor != null && cursor.moveToFirst()) {
+            long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+            return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+          }
+        }
+      } catch (Exception ignored) {}
+      try {
+        try (Cursor cursor = getContentResolver().query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection,
+            MediaStore.Images.Media.DATA + " LIKE ?", new String[]{ "%" + path },
+            MediaStore.Images.Media.DATE_ADDED + " DESC")) {
+          if (cursor != null && cursor.moveToFirst()) {
+            long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
+            return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+          }
+        }
+      } catch (Exception ignored) {}
+      throw new IllegalArgumentException("Image not found in MediaStore: " + path);
     }
 
     @JavascriptInterface

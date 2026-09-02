@@ -1,0 +1,40 @@
+name: Apply Complete Camera Fixes
+
+on:
+  push:
+    branches:
+      - fix/camera-gps-gallery-complete
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, 'apply complete camera UX patch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply idempotent source patch
+        run: python3 scripts/apply_complete_camera_fixes.py
+
+      - name: Verify source patch
+        run: |
+          grep -q "photoQualityPrioritization:'speed'" src/App.tsx
+          grep -q "openFieldTraceAlbum(false)" src/App.tsx
+          grep -q "CameraPreview.requestPermissions" src/components/CameraScreen.tsx
+          grep -q "locationService.checkAndRequestPermissions" src/components/CameraScreen.tsx
+          grep -q "'auto'" src/components/CameraScreen.tsx
+          grep -q "onPointerMove={handleGearPointerMove}" src/components/CameraScreen.tsx
+          ! grep -q "flashMode.*torch" src/components/CameraScreen.tsx
+          echo "FINAL SOURCE PATCH VERIFICATION PASSED"
+
+      - name: Commit patched source
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(camera): apply complete camera UX patch"
+          git push

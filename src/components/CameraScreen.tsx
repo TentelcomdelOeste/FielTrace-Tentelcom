@@ -1,6 +1,7 @@
 /**
  * Native camera screen (preview + controls + live overlay)
  * Extracted from App.tsx — Phase 1
+ * MUST be rendered OUTSIDE any parent with Tailwind `invisible`.
  */
 import { useState, useEffect, useRef } from 'react';
 import { CameraPreview } from '@capgo/camera-preview';
@@ -28,7 +29,6 @@ export function CameraScreen({
   onOpenQuickConfig,
 }: CameraScreenProps) {
   const [cameraZoom, setCameraZoom] = useState(1);
-  /** off | on (capture flash) | torch (continuous light for field work) */
   const [flashMode, setFlashMode] = useState<'off' | 'on' | 'torch'>('off');
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
@@ -71,7 +71,6 @@ export function CameraScreen({
     pinchStartDist.current = null;
   };
 
-  // Start / stop native preview
   useEffect(() => {
     let active = true;
     (async () => {
@@ -137,7 +136,7 @@ export function CameraScreen({
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="absolute inset-0 bg-transparent z-50 flex flex-col"
+      className="fixed inset-0 bg-transparent z-50 flex flex-col"
     >
       <div
         className="relative flex-1 bg-transparent overflow-hidden"

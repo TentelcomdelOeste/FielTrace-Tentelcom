@@ -1,0 +1,29 @@
+name: Patch App camera UX
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/patch-app-camera-ux.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Patch App.tsx
+        run: python3 scripts/patch_app_camera_ux.py
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx
+          git commit -m "App: zoom pinch/boton, flash, galeria abre preview + album nativo" || echo no_changes
+          git push

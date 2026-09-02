@@ -1,5 +1,7 @@
 name: Build FielTrace APK - native camera fix
 
+# Trigger build after the audited native camera/gallery merge.
+
 on:
   workflow_dispatch:
   push:

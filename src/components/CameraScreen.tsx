@@ -28,7 +28,8 @@ export function CameraScreen({
   onOpenQuickConfig,
 }: CameraScreenProps) {
   const [cameraZoom, setCameraZoom] = useState(1);
-  const [flashMode, setFlashMode] = useState<'off' | 'on'>('off');
+  /** off | on (capture flash) | torch (continuous light for field work) */
+  const [flashMode, setFlashMode] = useState<'off' | 'on' | 'torch'>('off');
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
@@ -146,13 +147,11 @@ export function CameraScreen({
       >
         <div className="absolute inset-0 bg-transparent pointer-events-none" aria-hidden="true" />
 
-        {/* Flash Feedback Layer */}
         <div
           id="camera-pulse"
           className="absolute inset-0 pointer-events-none transition-colors duration-100"
         />
 
-        {/* Real-time Metadata Overlay */}
         <div
           className={`absolute pointer-events-none flex flex-col ${overlayPositionClass}`}
           style={{ padding: '4%', maxWidth: '100%' }}
@@ -214,7 +213,6 @@ export function CameraScreen({
           </div>
         </div>
 
-        {/* Logo if different position */}
         {selectedProject.logoImage &&
           (selectedProject.logoPosition || 'top-left') !== selectedProject.overlayPosition && (
             <div
@@ -241,7 +239,6 @@ export function CameraScreen({
             </div>
           )}
 
-        {/* Quick Config */}
         <motion.button
           drag
           dragMomentum={false}
@@ -251,24 +248,30 @@ export function CameraScreen({
           <Settings className="w-5 h-5 pointer-events-none" />
         </motion.button>
 
-        {/* Flash + Zoom */}
         <div className="absolute top-6 right-6 z-50 flex flex-col gap-2 items-end">
           <button
             type="button"
             onClick={async () => {
-              const next = flashMode === 'off' ? 'on' : 'off';
+              const next: 'off' | 'on' | 'torch' =
+                flashMode === 'off' ? 'torch' : flashMode === 'torch' ? 'on' : 'off';
               setFlashMode(next);
-              await CameraPreview.setFlashMode({ flashMode: next }).catch((error) =>
-                console.warn('[Camera] flash:', error)
-              );
+              try {
+                await CameraPreview.setFlashMode({ flashMode: next });
+              } catch (error) {
+                const fallback = next === 'torch' ? 'on' : next;
+                setFlashMode(fallback);
+                await CameraPreview.setFlashMode({ flashMode: fallback }).catch((e) =>
+                  console.warn('[Camera] flash:', e)
+                );
+              }
             }}
             className="w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white active:scale-95"
-            title="Flash"
+            title="Flash / Linterna"
           >
-            {flashMode === 'on' ? (
-              <Zap className="w-5 h-5 text-yellow-300" />
-            ) : (
+            {flashMode === 'off' ? (
               <ZapOff className="w-5 h-5" />
+            ) : (
+              <Zap className={`w-5 h-5 ${flashMode === 'torch' ? 'text-yellow-300' : 'text-yellow-200'}`} />
             )}
           </button>
           <button
@@ -283,7 +286,6 @@ export function CameraScreen({
         </div>
       </div>
 
-      {/* Shutter Bar */}
       <div className="h-[120px] bg-black flex items-center justify-between px-8 shrink-0">
         <button
           onClick={onClose}

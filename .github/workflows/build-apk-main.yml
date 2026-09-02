@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - native-camera-gallery-fix
+      - main
 
 permissions:
   contents: read
@@ -12,177 +12,75 @@ permissions:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout native camera fix
+      - name: Checkout main
         uses: actions/checkout@v4
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
-
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-
       - name: Install Android SDK packages
         run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-
       - name: Install dependencies
         run: npm install --no-audit --no-fund
-
       - name: Audit source before APK
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import json
-          app = Path('src/App.tsx').read_text()
-          cam = Path('src/services/cameraService.ts').read_text()
-          storage = Path('src/services/storageService.ts').read_text()
-          main = Path('android/app/src/main/java/com/fieldtrace/app/MainActivity.java').read_text() if Path('android/app/src/main/java/com/fieldtrace/app/MainActivity.java').exists() else ''
-          pkg = json.loads(Path('package.json').read_text())
-          checks = {
-            'CameraPreview dependency': '@capgo/camera-preview' in pkg['dependencies'],
-            'native camera start': 'CameraPreview.start' in app,
-            'native capture': 'CameraPreview.capture' in app,
-            'native zoom': 'CameraPreview.setZoom' in app,
-            'native flash': 'CameraPreview.setFlashMode' in app,
-            'overlay': 'cameraService.drawOverlay(rawImage, evidenceObject)' in app,
-            'gallery save': 'cameraService.saveToGallery(finalImage, fileName)' in app,
-            'Field Trace album': 'Field Trace' in cam and 'Media.savePhoto' in cam,
-            'no photo persistence': 'La fotografía NO se persiste en IndexedDB' in storage,
-            'native gallery bridge': 'FieldTraceNative' in main,
+          app=Path('src/App.tsx').read_text()
+          cam=Path('src/services/cameraService.ts').read_text()
+          storage=Path('src/services/storageService.ts').read_text()
+          pkg=json.loads(Path('package.json').read_text())
+          checks={
+            'CameraPreview dependency':'@capgo/camera-preview' in pkg['dependencies'],
+            'native camera start':'CameraPreview.start' in app,
+            'native capture':'CameraPreview.capture' in app,
+            'native zoom':'CameraPreview.setZoom' in app,
+            'native flash':'CameraPreview.setFlashMode' in app,
+            'overlay':'cameraService.drawOverlay(rawImage, evidenceObject)' in app,
+            'gallery save':'cameraService.saveToGallery(finalImage, fileName)' in app,
+            'Field Trace album':'Field Trace' in cam and 'Media.savePhoto' in cam,
+            'no photo persistence':'La fotografía NO se persiste en IndexedDB' in storage,
           }
-          failed = [k for k,v in checks.items() if not v]
-          if failed:
-            raise SystemExit('SOURCE AUDIT FAILED: ' + ', '.join(failed))
+          failed=[k for k,v in checks.items() if not v]
+          if failed: raise SystemExit('SOURCE AUDIT FAILED: '+', '.join(failed))
           print('SOURCE AUDIT PASSED')
           PY
-
       - name: Build web app
         run: npm run build
-
       - name: Ensure Capacitor Android platform
         run: |
           if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
             rm -rf android
             npx cap add android
           fi
-
       - name: Sync Capacitor
         run: npx cap sync android
-
       - name: Restore native MainActivity bridge after sync
         run: |
-          cat > android/app/src/main/java/com/fieldtrace/app/MainActivity.java <<'JAVA'
-          package com.fieldtrace.app;
-
-          import android.content.ContentUris;
-          import android.content.Intent;
-          import android.database.Cursor;
-          import android.graphics.Bitmap;
-          import android.graphics.Canvas;
-          import android.graphics.Color;
-          import android.net.Uri;
-          import android.os.Bundle;
-          import android.provider.MediaStore;
-          import android.webkit.JavascriptInterface;
-          import android.webkit.WebSettings;
-          import android.webkit.WebView;
-          import com.getcapacitor.BridgeActivity;
-          import com.getcapacitor.BridgeWebChromeClient;
-
-          public class MainActivity extends BridgeActivity {
-            @Override public void onCreate(Bundle state) { super.onCreate(state); applyFixes(); }
-            @Override public void onStart() { super.onStart(); applyFixes(); }
-            @Override public void onResume() { super.onResume(); applyFixes(); }
-
-            private void applyFixes() {
-              try {
-                WebView webView = this.bridge.getWebView();
-                WebSettings settings = webView.getSettings();
-                settings.setMediaPlaybackRequiresUserGesture(false);
-                settings.setDomStorageEnabled(true);
-                settings.setJavaScriptEnabled(true);
-                webView.setBackgroundColor(Color.TRANSPARENT);
-                webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
-                webView.addJavascriptInterface(new FieldTraceBridge(), "FieldTraceNative");
-                webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
-                  @Override public Bitmap getDefaultVideoPoster() {
-                    Bitmap b = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
-                    new Canvas(b).drawARGB(0, 0, 0, 0);
-                    return b;
-                  }
-                });
-              } catch (Exception ignored) {}
-            }
-
-            public class FieldTraceBridge {
-              @JavascriptInterface public void openUri(String uriString) {
-                if (uriString == null || uriString.trim().isEmpty()) { openGallery(); return; }
-                try {
-                  Uri uri = resolveImageContentUri(uriString.trim());
-                  Intent intent = new Intent(Intent.ACTION_VIEW);
-                  intent.setDataAndType(uri, "image/*");
-                  intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                  startActivity(intent);
-                } catch (Exception e) { openGallery(); }
-              }
-
-              private Uri resolveImageContentUri(String value) {
-                Uri parsed = Uri.parse(value);
-                if ("content".equalsIgnoreCase(parsed.getScheme())) return parsed;
-                String path = "file".equalsIgnoreCase(parsed.getScheme()) ? parsed.getPath() : value;
-                String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DATA };
-                try (Cursor c = getContentResolver().query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, MediaStore.Images.Media.DATA + "=?", new String[]{path}, null)) {
-                  if (c != null && c.moveToFirst()) {
-                    long id = c.getLong(c.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
-                    return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
-                  }
-                }
-                throw new IllegalArgumentException("Image not found in MediaStore");
-              }
-
-              @JavascriptInterface public void openGallery() {
-                try {
-                  Intent i = new Intent(Intent.ACTION_VIEW);
-                  i.setDataAndType(Uri.parse("content://media/external/images/media"), "image/*");
-                  i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                  startActivity(i);
-                  return;
-                } catch (Exception ignored) {}
-                try {
-                  Intent i = new Intent(Intent.ACTION_MAIN);
-                  i.addCategory(Intent.CATEGORY_APP_GALLERY);
-                  i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                  startActivity(i);
-                } catch (Exception ignored) {}
-              }
-            }
-          }
-          JAVA
-
+          test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q FieldTraceNative android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q getDefaultVideoPoster android/app/src/main/java/com/fieldtrace/app/MainActivity.java
       - name: Prepare Gradle
         working-directory: android
         run: chmod +x gradlew
-
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
-
       - name: Final APK audit
         run: |
           test -s android/app/build/outputs/apk/debug/app-debug.apk
           git diff --check
           echo "APK BUILD AND FINAL AUDIT PASSED"
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:

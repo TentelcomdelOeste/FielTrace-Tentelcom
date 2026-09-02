@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { CameraPreview } from '@capgo/camera-preview';
 import { motion } from 'framer-motion';
 import { ArrowLeft, History, Settings, Zap, ZapOff, ZoomIn, RefreshCcw, AlertTriangle } from 'lucide-react';
@@ -132,7 +132,7 @@ export function CameraScreen({
     );
   }, [flashMode, starting, cameraError]);
 
-  const handleGearPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const handleGearPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
     gearDragging.current = true;
@@ -144,7 +144,7 @@ export function CameraScreen({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const handleGearPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const handleGearPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     if (!gearDragging.current) return;
     event.preventDefault();
     const nextX = Math.max(8, Math.min(window.innerWidth - 48, event.clientX - gearPointerOffset.current.x));
@@ -155,7 +155,7 @@ export function CameraScreen({
     setGearPosition({ x: nextX, y: nextY });
   };
 
-  const handleGearPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+  const handleGearPointerUp = (event: PointerEvent<HTMLButtonElement>) => {
     gearDragging.current = false;
     try {
       event.currentTarget.releasePointerCapture(event.pointerId);

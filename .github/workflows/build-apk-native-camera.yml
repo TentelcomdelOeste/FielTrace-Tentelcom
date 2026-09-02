@@ -95,3 +95,4 @@ jobs:
           name: FielTrace-native-camera-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 14

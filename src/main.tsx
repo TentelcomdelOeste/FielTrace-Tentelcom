@@ -1,7 +1,6 @@
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import { defineCustomElements } from '@ionic/pwa-elements/loader';
-import './services/instantCapture';
 import App from './App.tsx';
 import './index.css';
 

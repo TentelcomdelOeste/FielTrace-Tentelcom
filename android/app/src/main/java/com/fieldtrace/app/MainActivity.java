@@ -125,6 +125,17 @@ public class MainActivity extends BridgeActivity {
       openGallery();
     }
 
+    private static final String[] PREFERRED_GALLERY_PACKAGES = {
+        "com.google.android.apps.photos",
+        "com.google.android.apps.photosgo",
+        "com.sec.android.gallery3d",
+        "com.miui.gallery",
+        "com.huawei.photos",
+        "com.oneplus.gallery",
+        "com.android.gallery3d",
+        "com.google.android.gallery3d"
+    };
+
     private void launchViewer(Uri uri) {
       Intent intent = new Intent(Intent.ACTION_VIEW);
       intent.setDataAndType(uri, "image/*");
@@ -133,7 +144,26 @@ public class MainActivity extends BridgeActivity {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
         intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
       }
-      startActivity(intent);
+      if (startPreferred(intent)) return;
+      try {
+        startActivity(intent);
+      } catch (Exception ignored) {
+        openGallery();
+      }
+    }
+
+    private boolean startPreferred(Intent template) {
+      for (String pkg : PREFERRED_GALLERY_PACKAGES) {
+        try {
+          Intent copy = new Intent(template);
+          copy.setPackage(pkg);
+          if (copy.resolveActivity(getPackageManager()) != null) {
+            startActivity(copy);
+            return true;
+          }
+        } catch (Exception ignored) {}
+      }
+      return false;
     }
 
     private Uri resolveImageContentUri(String uriString) {
@@ -182,25 +212,22 @@ public class MainActivity extends BridgeActivity {
 
     @JavascriptInterface
     public void openGallery() {
+      Intent viewImages = new Intent(Intent.ACTION_VIEW);
+      viewImages.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*");
+      viewImages.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      if (startPreferred(viewImages)) return;
+
+      Intent galleryApp = new Intent(Intent.ACTION_MAIN);
+      galleryApp.addCategory(Intent.CATEGORY_APP_GALLERY);
+      galleryApp.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+      if (startPreferred(galleryApp)) return;
+
       try {
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setDataAndType(Uri.parse("content://media/external/images/media"), "image/*");
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(intent);
+        startActivity(galleryApp);
         return;
       } catch (Exception ignored) {}
       try {
-        Intent intent = new Intent(Intent.ACTION_MAIN);
-        intent.addCategory(Intent.CATEGORY_APP_GALLERY);
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(intent);
-        return;
-      } catch (Exception ignored) {}
-      try {
-        Intent intent = new Intent(Intent.ACTION_VIEW);
-        intent.setType("image/*");
-        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(intent);
+        startActivity(viewImages);
       } catch (Exception ignored) {}
     }
   }

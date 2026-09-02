@@ -1,1 +1,13 @@
-PLACEHOLDER_WILL_FAIL
+name: Disabled auto-fix (do not overwrite App.tsx)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skip:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Auto-fix disabled. App.tsx is owned by the gallery-stable branch and must not be overwritten."

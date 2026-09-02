@@ -50,18 +50,24 @@ jobs:
           main_txt = main.read_text() if main.exists() else ''
           combined = app + cam_screen
           checks = {
+            'App.tsx is real source (not placeholder)': 'export default function App' in app and 'RESTORING_FROM_LOCAL' not in app and len(app) > 5000,
+            'camera content uses hidden not invisible': "currentStep === 'camera' ? 'hidden'" in app,
+            'Campos Operativos modal': 'Campos Operativos' in app and 'showQuickConfig' in app,
             'CameraPreview dependency': '@capgo/camera-preview' in pkg.get('dependencies', {}),
             'native camera start': 'CameraPreview.start' in combined,
             'native capture': 'CameraPreview.capture' in combined,
             'native zoom': 'CameraPreview.setZoom' in combined,
             'native flash': 'CameraPreview.setFlashMode' in combined,
             'torch support': "'torch'" in cam_screen or 'torch' in cam_screen,
+            'gear is a plain button': 'aria-label="Campos operativos"' in cam_screen and 'dragMomentum' not in cam_screen,
+            'camera start spinner': 'starting' in cam_screen,
             'overlay': 'drawOverlay' in app or 'drawOverlay' in cam,
             'gallery save': 'saveToGallery' in app,
             'Field Trace album': 'Field Trace' in cam and 'Media.savePhoto' in cam,
             'rememberSaved path': 'rememberSaved' in cam or 'extractSavedPath' in cam,
             'native gallery bridge': 'FieldTraceNative' in main_txt,
             'openByFileName': 'openByFileName' in main_txt,
+            'preferred gallery packages': 'PREFERRED_GALLERY_PACKAGES' in main_txt and 'com.google.android.apps.photos' in main_txt,
           }
           failed = [k for k, v in checks.items() if not v]
           if failed:

@@ -111,6 +111,8 @@ html.native-camera-active .min-h-screen {
 
 /* Extra safety: hide residual white UI under native preview (Android WebView) */
 html.native-camera-active .min-h-screen > div:not(.fixed) {
+  display: none !important;
   visibility: hidden !important;
   pointer-events: none !important;
+  opacity: 0 !important;
 }

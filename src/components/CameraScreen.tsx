@@ -30,6 +30,7 @@ export function CameraScreen({
 }: CameraScreenProps) {
   const [cameraZoom, setCameraZoom] = useState(1);
   const [flashMode, setFlashMode] = useState<'off' | 'on' | 'torch'>('off');
+  const [starting, setStarting] = useState(true);
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
@@ -89,8 +90,10 @@ export function CameraScreen({
         if (!active) return;
         await CameraPreview.setFlashMode({ flashMode });
         await CameraPreview.setZoom({ level: cameraZoom });
+        if (active) setStarting(false);
       } catch (error) {
         console.error('[Camera] start:', error);
+        if (active) setStarting(false);
       }
     })();
     return () => {
@@ -238,14 +241,14 @@ export function CameraScreen({
             </div>
           )}
 
-        <motion.button
-          drag
-          dragMomentum={false}
+        <button
+          type="button"
           onClick={onOpenQuickConfig}
-          className="absolute top-6 left-6 w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white z-50 transition-colors hover:bg-black/50 shadow-2xl touch-none"
+          className="absolute top-6 left-6 w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white z-50 active:scale-95 shadow-2xl"
+          aria-label="Campos operativos"
         >
           <Settings className="w-5 h-5 pointer-events-none" />
-        </motion.button>
+        </button>
 
         <div className="absolute top-6 right-6 z-50 flex flex-col gap-2 items-end">
           <button
@@ -284,6 +287,12 @@ export function CameraScreen({
           </button>
         </div>
       </div>
+
+      {starting && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/40 pointer-events-none">
+          <RefreshCcw className="w-8 h-8 text-white animate-spin" />
+        </div>
+      )}
 
       <div className="h-[120px] bg-black flex items-center justify-between px-8 shrink-0">
         <button

@@ -28,13 +28,26 @@ export const cameraService = {
       img.onload = () => {
         clearTimeout(timeout);
         try {
+          let targetWidth = img.width;
+          let targetHeight = img.height;
+          const MAX_DIM = 2048;
+          if (targetWidth > MAX_DIM || targetHeight > MAX_DIM) {
+            if (targetWidth > targetHeight) {
+              targetHeight = Math.round((targetHeight * MAX_DIM) / targetWidth);
+              targetWidth = MAX_DIM;
+            } else {
+              targetWidth = Math.round((targetWidth * MAX_DIM) / targetHeight);
+              targetHeight = MAX_DIM;
+            }
+          }
+
           const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
+          canvas.width = targetWidth;
+          canvas.height = targetHeight;
           const ctx = canvas.getContext('2d');
           if (!ctx) return resolve(imageSrc);
 
-          ctx.drawImage(img, 0, 0);
+          ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
           const position = metadata.settings?.overlayPosition || 'top-left';
           const fontSizeScale = metadata.settings?.fontSizeScale || 'medium';

@@ -89,4 +89,11 @@ video {
 }
 
 
-html.native-camera-active, html.native-camera-active body, html.native-camera-active #root { background: transparent !important; }
+html.native-camera-active, html.native-camera-active body, html.native-camera-active #root { 
+  background: transparent !important; 
+  background-color: transparent !important;
+}
+
+body {
+  background-color: #000000;
+}

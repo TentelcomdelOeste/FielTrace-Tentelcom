@@ -393,7 +393,7 @@ export default function App() {
     setIsProcessing(true);
     
     try {
-      const captureResult = await CameraPreview.capture({ quality:90, format:'jpeg' });
+      const captureResult = await CameraPreview.capture({ quality:85, format:'jpeg' });
       const capturedValue = captureResult?.value;
       const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
@@ -522,7 +522,7 @@ export default function App() {
   return (
     <div className={`min-h-screen ${currentStep === 'camera' ? 'bg-transparent' : 'bg-white'} flex flex-col font-sans`}>
       {/* Main Content Viewport */}
-      <div className={`flex-1 flex flex-col relative overflow-hidden ${currentStep === 'camera' ? 'invisible' : ''}`}>
+      <div className={`flex-1 flex flex-col relative overflow-hidden ${currentStep === 'camera' ? 'hidden' : ''}`}>
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto px-6 py-8 no-scrollbar">
           <AnimatePresence mode="wait">
@@ -708,7 +708,7 @@ export default function App() {
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="absolute inset-0 bg-transparent z-50 flex flex-col"
+                className="fixed inset-0 bg-transparent z-50 flex flex-col"
               >
                 {/* Real-time Camera Bridge */}
                 <div className="relative flex-1 bg-transparent overflow-hidden" onTouchStart={onCameraTouchStart} onTouchMove={onCameraTouchMove} onTouchEnd={onCameraTouchEnd}>

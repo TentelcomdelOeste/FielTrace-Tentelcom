@@ -44,7 +44,10 @@ public class MainActivity extends BridgeActivity {
       settings.setDomStorageEnabled(true);
       settings.setJavaScriptEnabled(true);
       webView.setBackgroundColor(Color.TRANSPARENT);
-      webView.getRootView().setBackgroundColor(Color.TRANSPARENT);
+      webView.getRootView().setBackgroundColor(Color.BLACK);
+      if (getWindow() != null && getWindow().getDecorView() != null) {
+        getWindow().getDecorView().setBackgroundColor(Color.BLACK);
+      }
       webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
       try {
         webView.addJavascriptInterface(new FieldTraceBridge(), "FieldTraceNative");

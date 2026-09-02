@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/gallery-uri-camera-stable
+      - fix/camera-gps-gallery-complete
   workflow_dispatch:
 
 permissions:
@@ -55,17 +56,21 @@ jobs:
             'CameraPreview dependency': '@capgo/camera-preview' in pkg.get('dependencies', {}),
             'native camera start': 'CameraPreview.start' in cam_screen,
             'camera requests permission': 'CameraPreview.requestPermissions' in cam_screen,
+            'location requests permission': 'locationService.checkAndRequestPermissions' in cam_screen,
             'camera uses full-screen fill': "aspectRatio: 'fill'" in cam_screen and "setAspectRatio({ aspectRatio: 'fill'" in cam_screen,
             'camera does not force 4:3 dimensions': 'width: window.innerWidth' not in cam_screen and 'height: window.innerHeight' not in cam_screen,
             'native capture': 'CameraPreview.capture' in app,
+            'capture prioritizes speed': "photoQualityPrioritization:'speed'" in app,
             'native zoom': 'CameraPreview.setZoom' in cam_screen,
             'native flash': 'CameraPreview.setFlashMode' in cam_screen,
-            'torch support': 'torch' in cam_screen,
-            'gear is a plain button': 'aria-label="Campos operativos"' in cam_screen and 'dragMomentum' not in cam_screen,
+            'photo flash modes': "'off' | 'on' | 'auto'" in cam_screen and 'torch' not in cam_screen,
+            'draggable gear': 'onPointerMove={handleGearPointerMove}' in cam_screen and 'handleGearPointerDown' in cam_screen,
             'camera start error state': 'cameraError' in cam_screen and 'Reintentar cámara' in cam_screen,
             'overlay': 'drawOverlay' in app or 'drawOverlay' in cam,
             'gallery save': 'saveToGallery' in app,
             'Field Trace album': 'Field Trace' in cam and 'Media.savePhoto' in cam,
+            'gallery opens collection': 'openFieldTraceAlbum(false)' in app,
+            'gallery disabled before first photo': 'disabled={!lastImage}' in cam_screen,
             'rememberSaved path': 'rememberSaved' in cam or 'extractSavedPath' in cam,
             'native gallery bridge': 'FieldTraceNative' in main_txt,
             'openByFileName': 'openByFileName' in main_txt,

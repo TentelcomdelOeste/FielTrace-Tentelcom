@@ -13,114 +13,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Restore App.tsx from known good commit then apply fixes
+      - name: Restore App.tsx and apply GPS+shutter patch
         run: |
           set -euo pipefail
           git show d5a1666d92c1d20943cd764ce80c0744fe64a2ef:src/App.tsx > src/App.tsx
           test "$(wc -c < src/App.tsx)" -gt 50000
-          grep -q 'captureBatchPhoto' src/App.tsx
-          cat > /tmp/fix.patch << 'PATCH'
---- a/src/App.tsx
-+++ b/src/App.tsx
-@@ -88,7 +88,14 @@
-   let gpsLabel = 'SIN GPS';
-   let gpsColor = 'text-yellow-400 animate-pulse';
- 
--  if (gps) {
-+  // Prioridad: si el GPS del teléfono está apagado o sin permiso, NO mostrar caché
-+  if (diagnostic?.status === 'location_disabled' || diagnostic?.locationServicesEnabled === false) {
-+    gpsLabel = 'SIN GPS (GPS DESACTIVADO)';
-+    gpsColor = 'text-red-400';
-+  } else if (diagnostic?.status === 'permission_denied') {
-+    gpsLabel = 'SIN GPS (PERMISOS DENEGADOS)';
-+    gpsColor = 'text-red-400';
-+  } else if (gps) {
-     if (isLive) {
-       gpsLabel = `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}`;
-       gpsColor = 'text-green-400';
-@@ -96,12 +103,6 @@
-       gpsLabel = `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)} (CACHÉ)`;
-       gpsColor = 'text-amber-300';
-     }
--  } else if (diagnostic?.status === 'location_disabled') {
--    gpsLabel = 'SIN GPS (GPS DESACTIVADO)';
--    gpsColor = 'text-red-400';
--  } else if (diagnostic?.status === 'permission_denied') {
--    gpsLabel = 'SIN GPS (PERMISOS DENEGADOS)';
--    gpsColor = 'text-red-400';
-   } else if (diagnostic?.status === 'acquiring') {
-     gpsLabel = 'BUSCANDO GPS...';
-     gpsColor = 'text-yellow-400 animate-pulse';
-@@ -449,39 +450,44 @@
- 
-   const captureBatchPhoto = async () => {
-     if (!selectedProject || isProcessing) return;
--    setIsProcessing(true);
--    
--    // Feedback visual rápido INMEDIATO al presionar
-+
-+    // Feedback visual inmediato (no bloquea)
-     const pulse = document.getElementById('camera-pulse');
-     if (pulse) {
-       pulse.classList.add('bg-white/60');
-       setTimeout(() => pulse.classList.remove('bg-white/60'), 120);
-     }
- 
--    try {
--      // Re-armar el flash nativo si está en 'on' antes de la captura
--      if (flashMode === 'on') {
--        await ensureFlashArmed('on');
--      }
-+    // Bloqueo SOLO durante la captura nativa del sensor (anti doble-tap).
-+    // NO se espera flash, GPS, overlay, geocode, gallery ni IndexedDB.
-+    setIsProcessing(true);
- 
--      // Captura optimizada a 1920x1440 max / calidad 80 para puente nativo ultra-rápido (<150ms)
-+    try {
-+      // Captura física: único await en el camino crítico del obturador
-       const captureResult = await CameraPreview.capture({ width: 1920, quality: 80, format: 'jpeg' });
-       const capturedValue = captureResult?.value;
-       const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
-       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');
- 
--      // Liberar obturador instantáneamente
-+      // Liberar obturador INMEDIATAMENTE tras obtener la foto del sensor
-       setIsProcessing(false);
- 
--      // Obtener coordenada fresca o fallback en caché
--      const freshGps = await locationService.getFreshGps();
--      const { gps: stateGps, locationData, isLive } = locationService.getCurrentState();
--      const activeGps = freshGps || stateGps;
-+      // Re-armar flash en background (no bloquea siguiente disparo)
-+      if (flashMode === 'on') {
-+        void ensureFlashArmed('on');
-+      }
-+
-+      // GPS 100% síncrono en memoria (0ms). Si GPS del teléfono está apagado → SIN GPS (no caché)
-+      const { gps: stateGps, locationData, isLive, diagnostic } = locationService.getCurrentState();
-+      const locationOff = diagnostic?.status === 'location_disabled' || diagnostic?.locationServicesEnabled === false;
-+      const activeGps = locationOff ? null : stateGps;
-       const hasGps = !!(activeGps && activeGps.lat != null && activeGps.lon != null);
--      const isActualLive = activeGps?.source === 'live' || (isLive && activeGps === freshGps);
--      const gpsLabel = hasGps
--        ? (isActualLive ? `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)}` : `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)} (CACHÉ)`)
--        : 'SIN GPS';
-+      const isActualLive = !!(hasGps && (activeGps!.source === 'live' || isLive));
-+      const gpsLabel = locationOff
-+        ? 'SIN GPS (GPS DESACTIVADO)'
-+        : hasGps
-+          ? (isActualLive ? `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)}` : `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)} (CACHÉ)`)
-+          : 'SIN GPS';
-       const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
-       const ubicacionText = hasGps && currentFormattedLocation && currentFormattedLocation !== "Buscando..."
-         ? currentFormattedLocation
-PATCH
+          grep -q captureBatchPhoto src/App.tsx
+          echo 'LS0tIGEvc3JjL0FwcC50c3gKKysrIGIvc3JjL0FwcC50c3gKQEAgLTg4LDcgKzg4LDE0IEBACiAgIGxldCBncHNMYWJlbCA9ICdTSU4gR1BTJzsKICAgbGV0IGdwc0NvbG9yID0gJ3RleHQteWVsbG93LTQwMCBhbmltYXRlLXB1bHNlJzsKIAotICBpZiAoZ3BzKSB7CisgIC8vIFByaW9yaWRhZDogc2kgZWwgR1BTIGRlbCB0ZWzDqWZvbm8gZXN0w6EgYXBhZ2FkbyBvIHNpbiBwZXJtaXNvLCBOTyBtb3N0cmFyIGNhY2jDqQorICBpZiAoZGlhZ25vc3RpYz8uc3RhdHVzID09PSAnbG9jYXRpb25fZGlzYWJsZWQnIHx8IGRpYWdub3N0aWM/LmxvY2F0aW9uU2VydmljZXNFbmFibGVkID09PSBmYWxzZSkgeworICAgIGdwc0xhYmVsID0gJ1NJTiBHUFMgKEdQUyBERVNBQ1RJVkFETyknOworICAgIGdwc0NvbG9yID0gJ3RleHQtcmVkLTQwMCc7CisgIH0gZWxzZSBpZiAoZGlhZ25vc3RpYz8uc3RhdHVzID09PSAncGVybWlzc2lvbl9kZW5pZWQnKSB7CisgICAgZ3BzTGFiZWwgPSAnU0lOIEdQUyAoUEVSTUlTT1MgREVORUdBRE9TKSc7CisgICAgZ3BzQ29sb3IgPSAndGV4dC1yZWQtNDAwJzsKKyAgfSBlbHNlIGlmIChncHMpIHsKICAgICBpZiAoaXNMaXZlKSB7CiAgICAgICBncHNMYWJlbCA9IGAke2dwcy5sYXQudG9GaXhlZCg2KX0sICR7Z3BzLmxvbi50b0ZpeGVkKDYpfWA7CiAgICAgICBncHNDb2xvciA9ICd0ZXh0LWdyZWVuLTQwMCc7CkBAIC05NiwxMiArMTAzLDYgQEAKICAgICAgIGdwc0xhYmVsID0gYCR7Z3BzLmxhdC50b0ZpeGVkKDYpfSwgJHtncHMubG9uLnRvRml4ZWQoNil9IChDQUNIw4kpYDsKICAgICAgIGdwc0NvbG9yID0gJ3RleHQtYW1iZXItMzAwJzsKICAgICB9Ci0gIH0gZWxzZSBpZiAoZGlhZ25vc3RpYz8uc3RhdHVzID09PSAnbG9jYXRpb25fZGlzYWJsZWQnKSB7Ci0gICAgZ3BzTGFiZWwgPSAnU0lOIEdQUyAoR1BTIERFU0FDVElWQURPKSc7Ci0gICAgZ3BzQ29sb3IgPSAndGV4dC1yZWQtNDAwJzsKLSAgfSBlbHNlIGlmIChkaWFnbm9zdGljPy5zdGF0dXMgPT09ICdwZXJtaXNzaW9uX2RlbmllZCcpIHsKLSAgICBncHNMYWJlbCA9ICdTSU4gR1BTIChQRVJNSVNPUyBERU5FR0FET1MpJzsKLSAgICBncHNDb2xvciA9ICd0ZXh0LXJlZC00MDAnOwogICB9IGVsc2UgaWYgKGRpYWdub3N0aWM/LnN0YXR1cyA9PT0gJ2FjcXVpcmluZycpIHsKICAgICBncHNMYWJlbCA9ICdCVVNDQU5ETyBHUFMuLi4nOwogICAgIGdwc0NvbG9yID0gJ3RleHQteWVsbG93LTQwMCBhbmltYXRlLXB1bHNlJzsKQEAgLTQ0OSwzOSArNDUwLDQ0IEBACiAKICAgY29uc3QgY2FwdHVyZUJhdGNoUGhvdG8gPSBhc3luYyAoKSA9PiB7CiAgICAgaWYgKCFzZWxlY3RlZFByb2plY3QgfHwgaXNQcm9jZXNzaW5nKSByZXR1cm47Ci0gICAgc2V0SXNQcm9jZXNzaW5nKHRydWUpOwotICAgIAotICAgIC8vIEZlZWRiYWNrIHZpc3VhbCByw6FwaWRvIElOTUVESUFUTyBhbCBwcmVzaW9uYXIKKworICAgIC8vIEZlZWRiYWNrIHZpc3VhbCBpbW1lZGlhdG8gKG5vIGJsb3F1ZWEpCiAgICAgY29uc3QgcHVsc2UgPSBkb2N1bWVudC5nZXRFbGVtZW50QnlJZCgnY2FtZXJhLXB1bHNlJyk7CiAgICAgaWYgKHB1bHNlKSB7CiAgICAgICBwdWxzZS5jbGFzc0xpc3QuYWRkKCdiZy13aGl0ZS82MCcpOwogICAgICAgc2V0VGltZW91dCgoKSA9PiBwdWxzZS5jbGFzc0xpc3QucmVtb3ZlKCdiZy13aGl0ZS82MCcpLCAxMjApOwogICAgIH0KCi0gICAgdHJ5IHsKLSAgICAgIC8vIFJlLWFybWFyIGVsIGZsYXNoIG5hdGl2byBzaSBlc3TDoSBlbiAnb24nIGFudGVzIGRlIGxhIGNhcHR1cmEKLSAgICAgIGlmIChmbGFzaE1vZGUgPT09ICdvbicpIHsKLSAgICAgICAgYXdhaXQgZW5zdXJlRmxhc2hBcm1lZCgnb24nKTsKLSAgICAgIH0KKyAgICAvLyBCbG9xdWVvIFNPTE8gZHVyYW50ZSBsYSBjYXB0dXJhIG5hdGl2YSBkZWwgc2Vuc29yIChhbnRpIGRvYmxlLXRhcCkuCisgICAgLy8gTk8gc2UgZXNwZXJhIGZsYXNoLCBHUFMsIG92ZXJsYXksIGdlb2NvZGUsIGdhbGxlcnkgbmkgSW5kZXhlZERCLgorICAgIHNldElzUHJvY2Vzc2luZyh0cnVlKTsKCi0gICAgICAvLyBDYXB0dXJhIG9wdGltaXphZGEgYSAxOTIweDE0NDAgbWF4IC8gY2FsaWRhZCA4MCBwYXJhIHB1ZW50ZSBuYXRpdm8gdWx0cmEtcsOhcGlkbyAoPDE1MG1zKQorICAgIHRyeSB7CisgICAgICAvLyBDYXB0dXJhIGbDrXNpY2E6IMO6bmljbyBhd2FpdCBlbiBlbCBjYW1pbm8gY3LDrXRpY28gZGVsIG9idHVyYWRvcgogICAgICAgY29uc3QgY2FwdHVyZVJlc3VsdCA9IGF3YWl0IENhbWVyYVByZXZpZXcuY2FwdHVyZSh7IHdpZHRoOiAxOTIwLCBxdWFsaXR5OiA4MCwgZm9ybWF0OiAnanBlZycgfSk7CiAgICAgICBjb25zdCBjYXB0dXJlZFZhbHVlID0gY2FwdHVyZVJlc3VsdD8udmFsdWU7CiAgICAgICBjb25zdCByYXdJbWFnZSA9IGNhcHR1cmVkVmFsdWUgPyAoY2FwdHVyZWRWYWx1ZS5zdGFydHNXaXRoKCdkYXRhOicpID8gY2FwdHVyZWRWYWx1ZSA6IGBkYXRhOmltYWdlL2pwZWc7YmFzZTY0LCR7Y2FwdHVyZWRWYWx1ZX1gKSA6IG51bGw7CiAgICAgICBpZiAoIXJhd0ltYWdlKSB0aHJvdyBuZXcgRXJyb3IoJ05vIHNlIHB1ZG8gY2FwdHVyYXIgbGEgaW1hZ2VuIGNvbiBsYSBjw6FtYXJhIG5hdGl2YScpOwogCi0gICAgICAvLyBMaWJlcmFyIG9idHVyYWRvciBpbnN0YW50w6FuZWFtZW50ZQorICAgICAgLy8gTGliZXJhciBvYnR1cmFkb3IgSU5NRURJQVRBTUVOVEUgdHJhcyBvYnRlbmVyIGxhIGZvdG8gZGVsIHNlbnNvcgogICAgICAgc2V0SXNQcm9jZXNzaW5nKGZhbHNlKTsKIAotICAgICAgLy8gT2J0ZW5lciBjb29yZGVuYWRhIGZyZXNjYSBvIGZhbGxiYWNrIGVuIGNhY2jDqQotICAgICAgY29uc3QgZnJlc2hHcHMgPSBhd2FpdCBsb2NhdGlvblNlcnZpY2UuZ2V0RnJlc2hHcHMoKTsKLSAgICAgIGNvbnN0IHsgZ3BzOiBzdGF0ZUdwcywgbG9jYXRpb25EYXRhLCBpc0xpdmUgfSA9IGxvY2F0aW9uU2VydmljZS5nZXRDdXJyZW50U3RhdGUoKTsKLSAgICAgIGNvbnN0IGFjdGl2ZUdwcyA9IGZyZXNoR3BzIHx8IHN0YXRlR3BzOworICAgICAgLy8gUmUtYXJtYXIgZmxhc2ggZW4gYmFja2dyb3VuZCAobm8gYmxvcXVlYSBzaWd1aWVudGUgZGlzcGFybykKKyAgICAgIGlmIChmbGFzaE1vZGUgPT09ICdvbicpIHsKKyAgICAgICAgdm9pZCBlbnN1cmVGbGFzaEFybWVkKCdvbicpOworICAgICAgfQorCisgICAgICAvLyBHUFMgMTAwJSBzw61uY3Jvbm8gZW4gbWVtb3JpYSAoMG1zKS4gU2kgR1BTIGRlbCB0ZWzDqWZvbm8gZXN0w6EgYXBhZ2FkbyDihpIgU0lOIEdQUyAobm8gY2FjaMOpKQorICAgICAgY29uc3QgeyBncHM6IHN0YXRlR3BzLCBsb2NhdGlvbkRhdGEsIGlzTGl2ZSwgZGlhZ25vc3RpYyB9ID0gbG9jYXRpb25TZXJ2aWNlLmdldEN1cnJlbnRTdGF0ZSgpOworICAgICAgY29uc3QgbG9jYXRpb25PZmYgPSBkaWFnbm9zdGljPy5zdGF0dXMgPT09ICdsb2NhdGlvbl9kaXNhYmxlZCcgfHwgZGlhZ25vc3RpYz8ubG9jYXRpb25TZXJ2aWNlc0VuYWJsZWQgPT09IGZhbHNlOworICAgICAgY29uc3QgYWN0aXZlR3BzID0gbG9jYXRpb25PZmYgPyBudWxsIDogc3RhdGVHcHM7CiAgICAgICBjb25zdCBoYXNHcHMgPSAhIShhY3RpdmVHcHMgJiYgYWN0aXZlR3BzLmxhdCAhPSBudWxsICYmIGFjdGl2ZUdwcy5sb24gIT0gbnVsbCk7Ci0gICAgICBjb25zdCBpc0FjdHVhbExpdmUgPSBhY3RpdmVHcHM/LnNvdXJjZSA9PT0gJ2xpdmUnIHx8IChpc0xpdmUgJiYgYWN0aXZlR3BzID09PSBmcmVzaEdwcyk7Ci0gICAgICBjb25zdCBncHNMYWJlbCA9IGhhc0dwcwotICAgICAgICA/IChpc0FjdHVhbExpdmUgPyBgJHthY3RpdmVHcHMhLmxhdC50b0ZpeGVkKDYpfSwgJHthY3RpdmVHcHMhLmxvbi50b0ZpeGVkKDYpfWAgOiBgJHthY3RpdmVHcHMhLmxhdC50b0ZpeGVkKDYpfSwgJHthY3RpdmVHcHMhLmxvbi50b0ZpeGVkKDYpfSAoQ0FDSMOpKWApCi0gICAgICAgIDogJ1NJTiBHUFMnOworICAgICAgY29uc3QgaXNBY3R1YWxMaXZlID0gISEoaGFzR3BzICYmIChhY3RpdmVHcHMhLnNvdXJjZSA9PT0gJ2xpdmUnIHx8IGlzTGl2ZSkpOworICAgICAgY29uc3QgZ3BzTGFiZWwgPSBsb2NhdGlvbk9mZgorICAgICAgICA/ICdTSU4gR1BTIChHUFMgREVTQUNUSVZBRE8pJworICAgICAgICA6IGhhc0dwcworICAgICAgICAgID8gKGlzQWN0dWFsTGl2ZSA/IGAke2FjdGl2ZUdwcyEubGF0LnRvRml4ZWQoNil9LCAke2FjdGl2ZUdwcyEubG9uLnRvRml4ZWQoNil9YCA6IGAke2FjdGl2ZUdwcyEubGF0LnRvRml4ZWQoNil9LCAke2FjdGl2ZUdwcyEubG9uLnRvRml4ZWQoNil9IChDQUNIw4kpYCkKKyAgICAgICAgICA6ICdTSU4gR1BTJzsKICAgICAgIGNvbnN0IGN1cnJlbnRGb3JtYXR0ZWRMb2NhdGlvbiA9IGdldEZvcm1hdHRlZExvY2F0aW9uVGV4dChsb2NhdGlvbkRhdGEsIHNlbGVjdGVkUHJvamVjdCk7CiAgICAgICBjb25zdCB1YmljYWNpb25UZXh0ID0gaGFzR3BzICYmIGN1cnJlbnRGb3JtYXR0ZWRMb2NhdGlvbiAmJiBjdXJyZW50Rm9ybWF0dGVkTG9jYXRpb24gIT09ICJCdXNjYW5kby4uLiIKICAgICAgICAgPyBjdXJyZW50Rm9ybWF0dGVkTG9jYXRpb24K' | base64 -d > /tmp/fix.patch
           patch -p1 < /tmp/fix.patch
           grep -q 'Liberar obturador INMEDIATAMENTE' src/App.tsx
           grep -q 'Prioridad: si el GPS' src/App.tsx
-          grep -q 'export default function App' src/App.tsx
-          echo "PATCH APPLIED OK lines=$(wc -l < src/App.tsx)"
-      - name: Commit fixed App.tsx
+          echo "PATCH OK lines=$(wc -l < src/App.tsx)"
+      - name: Commit
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

@@ -3,6 +3,7 @@ import { CameraPreview } from '@capgo/camera-preview';
 import { motion } from 'framer-motion';
 import { ArrowLeft, History, Settings, Zap, ZapOff, ZoomIn, RefreshCcw, AlertTriangle } from 'lucide-react';
 import { LiveLocationOverlay } from './LiveLocationOverlay';
+import { locationService } from '../services/locationService';
 
 interface CameraScreenProps {
   selectedProject: any;
@@ -24,11 +25,15 @@ export function CameraScreen({
   onOpenQuickConfig,
 }: CameraScreenProps) {
   const [cameraZoom, setCameraZoom] = useState(1);
-  const [flashMode, setFlashMode] = useState<'off' | 'on' | 'torch'>('off');
+  const [flashMode, setFlashMode] = useState<'off' | 'on' | 'auto'>('off');
   const [starting, setStarting] = useState(true);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [gearPosition, setGearPosition] = useState({ x: 24, y: 24 });
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
+  const gearDragging = useRef(false);
+  const gearMoved = useRef(false);
+  const gearPointerOffset = useRef({ x: 0, y: 0 });
 
   const applyNativeZoom = async (level: number) => {
     const next = Math.max(1, Math.min(8, Math.round(level * 10) / 10));
@@ -45,11 +50,25 @@ export function CameraScreen({
     void applyNativeZoom(next);
   };
 
+  const startLocationFlow = async () => {
+    try {
+      const granted = await locationService.checkAndRequestPermissions();
+      if (granted) {
+        void locationService.getCurrentPosition();
+      }
+    } catch (error) {
+      console.warn('[GPS] camera permission flow:', error);
+    }
+  };
+
   const startCamera = async () => {
     setStarting(true);
     setCameraError(null);
 
     try {
+      // Location permission is requested first so Android shows the GPS
+      // permission when the camera is entered, without waiting for a GPS fix.
+      await startLocationFlow();
       await CameraPreview.stop({ force: true }).catch(() => undefined);
 
       const permission = await CameraPreview.requestPermissions({
@@ -65,8 +84,6 @@ export function CameraScreen({
         throw new Error('El permiso de cámara no está concedido.');
       }
 
-      // IMPORTANT: do not provide width/height together with aspectRatio.
-      // "fill" lets the native plugin occupy the complete device screen.
       await CameraPreview.start({
         position: 'rear',
         toBack: true,
@@ -80,7 +97,6 @@ export function CameraScreen({
         rotateWhenOrientationChanged: true,
       });
 
-      // Enforce full-screen placement after start as an additional guard.
       await CameraPreview.setAspectRatio({ aspectRatio: 'fill', x: 0, y: 0 });
       await CameraPreview.setFlashMode({ flashMode: 'off' });
       await CameraPreview.setZoom({ level: 1 });
@@ -115,6 +131,44 @@ export function CameraScreen({
       console.warn('[Camera] flash:', error)
     );
   }, [flashMode, starting, cameraError]);
+
+  const handleGearPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    gearDragging.current = true;
+    gearMoved.current = false;
+    gearPointerOffset.current = {
+      x: event.clientX - gearPosition.x,
+      y: event.clientY - gearPosition.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const handleGearPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!gearDragging.current) return;
+    event.preventDefault();
+    const nextX = Math.max(8, Math.min(window.innerWidth - 48, event.clientX - gearPointerOffset.current.x));
+    const nextY = Math.max(8, Math.min(window.innerHeight - 48, event.clientY - gearPointerOffset.current.y));
+    if (Math.abs(nextX - gearPosition.x) > 3 || Math.abs(nextY - gearPosition.y) > 3) {
+      gearMoved.current = true;
+    }
+    setGearPosition({ x: nextX, y: nextY });
+  };
+
+  const handleGearPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
+    gearDragging.current = false;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch (_) {}
+  };
+
+  const handleGearClick = () => {
+    if (gearMoved.current) {
+      gearMoved.current = false;
+      return;
+    }
+    onOpenQuickConfig();
+  };
 
   const overlayPositionClass =
     selectedProject.overlayPosition === 'top-left'
@@ -237,12 +291,17 @@ export function CameraScreen({
             </div>
           )}
 
-        {/* Plain button: no draggable/gesture wrapper, so taps always reach the gear. */}
         <button
           type="button"
-          onClick={onOpenQuickConfig}
-          className="absolute top-6 left-6 w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white z-50 active:scale-95 shadow-2xl"
+          onPointerDown={handleGearPointerDown}
+          onPointerMove={handleGearPointerMove}
+          onPointerUp={handleGearPointerUp}
+          onPointerCancel={handleGearPointerUp}
+          onClick={handleGearClick}
+          className="absolute w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white z-50 active:scale-95 shadow-2xl"
+          style={{ left: gearPosition.x, top: gearPosition.y, touchAction: 'none' }}
           aria-label="Campos operativos"
+          title="Arrastrar o tocar para abrir"
         >
           <Settings className="w-5 h-5 pointer-events-none" />
         </button>
@@ -251,23 +310,22 @@ export function CameraScreen({
           <button
             type="button"
             onClick={async () => {
-              const next: 'off' | 'on' | 'torch' = flashMode === 'off' ? 'torch' : flashMode === 'torch' ? 'on' : 'off';
+              const next: 'off' | 'on' | 'auto' = flashMode === 'off' ? 'auto' : flashMode === 'auto' ? 'on' : 'off';
               try {
                 await CameraPreview.setFlashMode({ flashMode: next });
                 setFlashMode(next);
               } catch (error) {
                 console.warn('[Camera] flash:', error);
-                const fallback = next === 'torch' ? 'on' : 'off';
                 try {
-                  await CameraPreview.setFlashMode({ flashMode: fallback });
-                  setFlashMode(fallback);
+                  await CameraPreview.setFlashMode({ flashMode: 'off' });
+                  setFlashMode('off');
                 } catch (fallbackError) {
                   console.warn('[Camera] flash fallback:', fallbackError);
                 }
               }
             }}
             className="w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white active:scale-95"
-            title="Flash / Linterna"
+            title="Flash: apagado / automático / al tomar foto"
           >
             {flashMode === 'off' ? <ZapOff className="w-5 h-5" /> : <Zap className="w-5 h-5 text-yellow-200" />}
           </button>
@@ -332,8 +390,10 @@ export function CameraScreen({
         <button
           type="button"
           onClick={onOpenGallery}
-          className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95"
-          aria-label="Abrir galería"
+          disabled={!lastImage}
+          className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95 disabled:opacity-35 disabled:active:scale-100"
+          aria-label={lastImage ? 'Abrir álbum Field Trace' : 'No hay fotos todavía'}
+          title={lastImage ? 'Abrir álbum Field Trace' : 'Todavía no hay fotos'}
         >
           {lastImage ? <img src={lastImage} className="w-full h-full object-cover" alt="Ultima foto" /> : <History className="w-7 h-7 opacity-40" />}
         </button>

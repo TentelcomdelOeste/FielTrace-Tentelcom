@@ -1,0 +1,28 @@
+name: Apply shutter UX (no flash, no block)
+on:
+  workflow_dispatch:
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply shutter UX fix
+        run: |
+          set -e
+          python3 scripts/fix_shutter_ux.py
+          grep -n "capturingRef" src/App.tsx | head -5
+          if grep -n "bg-white/60" src/App.tsx; then echo FAIL pulse still present; exit 1; fi
+          if grep -A30 "const captureBatchPhoto" src/App.tsx | grep -q "setIsProcessing(true)"; then echo FAIL still uses isProcessing lock; exit 1; fi
+          echo OK
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx
+          git commit -m "fix(shutter): no white flash; ref-based anti-double-tap (button never blocks/spins)" || echo nothing
+          git push origin main

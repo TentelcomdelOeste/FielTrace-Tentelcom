@@ -38,6 +38,12 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Verify native CameraX zero-shutter-lag patch
+        run: |
+          grep -q 'CAPTURE_MODE_ZERO_SHUTTER_LAG' node_modules/@capgo/camera-preview/android/src/main/java/app/capgo/capacitor/camera/preview/CameraXView.java
+          ! grep -q 'CAPTURE_MODE_MINIMIZE_LATENCY' node_modules/@capgo/camera-preview/android/src/main/java/app/capgo/capacitor/camera/preview/CameraXView.java
+          echo "NATIVE CAMERA X ZSL PATCH VERIFIED"
+
       - name: Source verification
         run: |
           python3 - <<'PY'

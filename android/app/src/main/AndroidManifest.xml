@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <application
         android:allowBackup="true"
@@ -36,14 +37,26 @@
         </provider>
     </application>
 
-    <!-- Permissions -->
+    <!-- Hardware features (optional so app installs on devices without GPS/camera) -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
+    <!-- Core permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!--
+      Location (foreground). Required by @capacitor/geolocation.
+      Must appear in the FINAL merged APK or the system will never show
+      "Ubicación" under App → Permissions and the plugin returns OS-PLUG-GLOC-0018.
+      tools:node="merge" forces survival across library/plugin merges.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="merge" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="merge" />
+
+    <!-- Gallery / media (Android 12 and below + 13+) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />

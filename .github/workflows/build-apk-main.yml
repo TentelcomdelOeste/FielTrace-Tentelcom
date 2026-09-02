@@ -41,9 +41,12 @@ jobs:
           app=Path('src/App.tsx').read_text()
           cam=Path('src/services/cameraService.ts').read_text()
           storage=Path('src/services/storageService.ts').read_text()
+          loc=Path('src/services/locationService.ts').read_text()
+          manifest=Path('android/app/src/main/AndroidManifest.xml').read_text()
           pkg=json.loads(Path('package.json').read_text())
           checks={
             'CameraPreview dependency':'@capgo/camera-preview' in pkg['dependencies'],
+            'Geolocation dependency':'@capacitor/geolocation' in pkg['dependencies'],
             'native camera start':'CameraPreview.start' in app,
             'native capture':'CameraPreview.capture' in app,
             'native zoom':'CameraPreview.setZoom' in app,
@@ -52,10 +55,19 @@ jobs:
             'gallery save':'cameraService.saveToGallery(finalImage, fileName)' in app,
             'Field Trace album':'Field Trace' in cam and 'Media.savePhoto' in cam,
             'no photo persistence':'La fotografía NO se persiste en IndexedDB' in storage,
+            'manifest FINE location':'ACCESS_FINE_LOCATION' in manifest,
+            'manifest COARSE location':'ACCESS_COARSE_LOCATION' in manifest,
+            'lastKnownLocation used':'getLastKnownLocation' in app,
           }
+          capture_fn = app.split('const captureBatchPhoto')[1].split('const shareNative')[0] if 'const captureBatchPhoto' in app else ''
+          pre_capture = capture_fn.split('CameraPreview.capture')[0] if 'CameraPreview.capture' in capture_fn else ''
+          checks['no await flash before capture'] = 'await ensureFlashArmed' not in pre_capture
+          checks['shutter unlock after capture'] = 'setIsProcessing(false)' in capture_fn
           failed=[k for k,v in checks.items() if not v]
           if failed: raise SystemExit('SOURCE AUDIT FAILED: '+', '.join(failed))
           print('SOURCE AUDIT PASSED')
+          for k,v in checks.items():
+              print(('  OK ' if v else '  FAIL ') + k)
           PY
       - name: Build web app
         run: npm run build
@@ -67,24 +79,66 @@ jobs:
           fi
       - name: Sync Capacitor
         run: npx cap sync android
-      - name: Restore committed native MainActivity after sync
+      - name: Restore committed native files after sync
         run: |
           test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          git checkout -- android/app/src/main/AndroidManifest.xml
           test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'getDefaultVideoPoster' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
-          echo "NATIVE MAINACTIVITY RESTORED"
+          grep -q 'ACCESS_FINE_LOCATION' android/app/src/main/AndroidManifest.xml
+          grep -q 'ACCESS_COARSE_LOCATION' android/app/src/main/AndroidManifest.xml
+          echo "NATIVE MainActivity + AndroidManifest RESTORED"
       - name: Prepare Gradle
         working-directory: android
         run: chmod +x gradlew
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
+      - name: Validate APK permissions (FAIL if location missing)
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          echo "=== APK size ==="
+          ls -lh "$APK"
+
+          AAPT=""
+          for candidate in \
+            "$ANDROID_HOME/build-tools/36.0.0/aapt" \
+            "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" \
+            /usr/local/lib/android/sdk/build-tools/36.0.0/aapt; do
+            if [ -x "$candidate" ]; then AAPT="$candidate"; break; fi
+          done
+          if [ -z "$AAPT" ]; then
+            AAPT=$(find "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}" -name aapt -type f 2>/dev/null | head -1 || true)
+          fi
+
+          if [ -n "$AAPT" ] && [ -x "$AAPT" ]; then
+            echo "Using aapt: $AAPT"
+            PERMS=$("$AAPT" dump permissions "$APK" 2>/dev/null || true)
+            BADGING=$("$AAPT" dump badging "$APK" 2>/dev/null || true)
+            echo "=== aapt permissions ==="
+            echo "$PERMS"
+            echo "=== uses-permission (badging) ==="
+            echo "$BADGING" | grep "uses-permission" || true
+            COMBINED="$PERMS"$'\n'"$BADGING"
+            echo "$COMBINED" | grep -q "ACCESS_FINE_LOCATION" || { echo "FAIL: ACCESS_FINE_LOCATION missing from APK"; exit 1; }
+            echo "$COMBINED" | grep -q "ACCESS_COARSE_LOCATION" || { echo "FAIL: ACCESS_COARSE_LOCATION missing from APK"; exit 1; }
+            echo "PASS: ACCESS_FINE_LOCATION and ACCESS_COARSE_LOCATION present in FINAL APK (aapt)"
+          else
+            echo "aapt not found — fallback strings on binary manifest"
+            TMP=$(mktemp -d)
+            unzip -q -o "$APK" AndroidManifest.xml -d "$TMP"
+            strings "$TMP/AndroidManifest.xml" | grep -q "ACCESS_FINE_LOCATION" || { echo "FAIL: ACCESS_FINE_LOCATION not in APK"; exit 1; }
+            strings "$TMP/AndroidManifest.xml" | grep -q "ACCESS_COARSE_LOCATION" || { echo "FAIL: ACCESS_COARSE_LOCATION not in APK"; exit 1; }
+            strings "$TMP/AndroidManifest.xml" | grep -q "android.permission.CAMERA" || { echo "FAIL: CAMERA not in APK"; exit 1; }
+            echo "PASS: ACCESS_FINE_LOCATION + ACCESS_COARSE_LOCATION + CAMERA present in APK (strings)"
+          fi
       - name: Final APK audit
         run: |
           test -s android/app/build/outputs/apk/debug/app-debug.apk
-          git diff --check
           echo "APK BUILD AND FINAL AUDIT PASSED"
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4

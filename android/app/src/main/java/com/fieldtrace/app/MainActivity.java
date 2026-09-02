@@ -50,14 +50,13 @@ public class MainActivity extends BridgeActivity {
       webView.setBackgroundColor(Color.TRANSPARENT);
       webView.getRootView().setBackgroundColor(Color.TRANSPARENT);
       webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
-      try {
-        webView.addJavascriptInterface(new FieldTraceBridge(), "FieldTraceNative");
-      } catch (Exception ignored) {}
+      try { webView.addJavascriptInterface(new FieldTraceBridge(), "FieldTraceNative"); } catch (Exception ignored) {}
       webView.setWebChromeClient(new BridgeWebChromeClient(this.bridge) {
         @Override
         public Bitmap getDefaultVideoPoster() {
           Bitmap bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
-          Canvas canvas = new Canvas(bitmap);
+          Bitmap canvasBitmap = bitmap;
+          Canvas canvas = new Canvas(canvasBitmap);
           canvas.drawARGB(0, 0, 0, 0);
           return bitmap;
         }
@@ -68,25 +67,17 @@ public class MainActivity extends BridgeActivity {
   public class FieldTraceBridge {
     @JavascriptInterface
     public void openUri(String uriString) {
-      if (uriString == null || uriString.trim().isEmpty()) {
-        openGallery();
-        return;
-      }
-
+      if (uriString == null || uriString.trim().isEmpty()) { openGallery(); return; }
       String raw = uriString.trim();
       try {
         Uri parsed = Uri.parse(raw);
-        if ("content".equalsIgnoreCase(parsed.getScheme())) {
-          if (launchViewer(parsed)) return;
-        }
+        if ("content".equalsIgnoreCase(parsed.getScheme()) && launchViewer(parsed)) return;
       } catch (Exception ignored) {}
 
       String path = raw;
       try {
         Uri parsed = Uri.parse(raw);
-        if ("file".equalsIgnoreCase(parsed.getScheme()) && parsed.getPath() != null) {
-          path = parsed.getPath();
-        }
+        if ("file".equalsIgnoreCase(parsed.getScheme()) && parsed.getPath() != null) path = parsed.getPath();
       } catch (Exception ignored) {}
 
       try {
@@ -94,21 +85,14 @@ public class MainActivity extends BridgeActivity {
         if (launchViewer(mediaUri)) return;
       } catch (Exception ignored) {}
 
-      // The Media plugin saves into Android's external-media directory and
-      // asks the system media scanner to index the file. That indexing can be
-      // asynchronous, so scan it again here and open the URI returned by the
-      // scanner instead of guessing a MediaStore row.
       scanAndOpen(path);
     }
 
     @JavascriptInterface
     public void openByFileName(String fileName) {
-      if (fileName == null || fileName.trim().isEmpty()) {
-        openGallery();
-        return;
-      }
+      if (fileName == null || fileName.trim().isEmpty()) { openGallery(); return; }
       String name = fileName.trim();
-      if (!name.contains(".")) name = name + ".jpg";
+      if (!name.contains(".")) name += ".jpg";
       try {
         Uri uri = queryByDisplayName(name);
         if (uri != null && launchViewer(uri)) return;
@@ -136,39 +120,27 @@ public class MainActivity extends BridgeActivity {
     private void scanAndOpen(String path) {
       try {
         File file = new File(path);
-        if (!file.exists() || !file.isFile()) {
-          openGallery();
-          return;
-        }
+        if (!file.exists() || !file.isFile()) { openGallery(); return; }
         final String scanPath = file.getAbsolutePath();
-        MediaScannerConnection.scanFile(this@MainActivity(), new String[]{scanPath}, new String[]{"image/jpeg"},
+        MediaScannerConnection.scanFile(
+            MainActivity.this,
+            new String[]{scanPath},
+            new String[]{"image/jpeg"},
             (scannedPath, uri) -> runOnUiThread(() -> {
               if (uri != null && launchViewer(uri)) return;
               openWithFileProvider(scanPath);
-            }));
+            })
+        );
       } catch (Exception ignored) {
         openWithFileProvider(path);
       }
     }
 
-    // Helper only to keep the MediaScannerConnection call unambiguous inside
-    // the inner Javascript bridge class.
-    private MainActivity this@MainActivity() {
-      return MainActivity.this;
-    }
-
     private void openWithFileProvider(String path) {
       try {
         File file = new File(path);
-        if (!file.exists()) {
-          openGallery();
-          return;
-        }
-        Uri uri = FileProvider.getUriForFile(
-            MainActivity.this,
-            getPackageName() + ".fileprovider",
-            file
-        );
+        if (!file.exists()) { openGallery(); return; }
+        Uri uri = FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".fileprovider", file);
         if (launchViewer(uri)) return;
       } catch (Exception ignored) {}
       openGallery();
@@ -186,18 +158,12 @@ public class MainActivity extends BridgeActivity {
     };
 
     private boolean launchViewer(Uri uri) {
-      if (uri == null || uri.getScheme() == null || !"content".equalsIgnoreCase(uri.getScheme())) {
-        return false;
-      }
-
+      if (uri == null || uri.getScheme() == null || !"content".equalsIgnoreCase(uri.getScheme())) return false;
       Intent intent = new Intent(Intent.ACTION_VIEW);
       intent.addCategory(Intent.CATEGORY_DEFAULT);
       intent.setDataAndType(uri, "image/*");
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-      }
-
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
       return startPreferred(intent);
     }
 
@@ -218,16 +184,9 @@ public class MainActivity extends BridgeActivity {
     private Uri resolveImageContentUri(String uriString) {
       Uri parsed = Uri.parse(uriString);
       if ("content".equalsIgnoreCase(parsed.getScheme())) return parsed;
-
       String path = "file".equalsIgnoreCase(parsed.getScheme()) ? parsed.getPath() : uriString;
       if (path == null) path = uriString;
-
-      String[] projection = {
-          MediaStore.Images.Media._ID,
-          MediaStore.Images.Media.DATA,
-          MediaStore.Images.Media.DISPLAY_NAME
-      };
-
+      String[] projection = { MediaStore.Images.Media._ID, MediaStore.Images.Media.DATA, MediaStore.Images.Media.DISPLAY_NAME };
       try (Cursor cursor = getContentResolver().query(
           MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
           projection,
@@ -239,7 +198,6 @@ public class MainActivity extends BridgeActivity {
           return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
         }
       } catch (Exception ignored) {}
-
       String fileName = path.contains("/") ? path.substring(path.lastIndexOf('/') + 1) : path;
       Uri byName = queryByDisplayName(fileName);
       if (byName != null) return byName;
@@ -248,9 +206,6 @@ public class MainActivity extends BridgeActivity {
 
     @JavascriptInterface
     public void openGallery() {
-      // Open the gallery app itself first. Do not send the generic image
-      // collection URI to Google Photos because some versions show an error
-      // placeholder for that URI.
       Intent galleryApp = new Intent(Intent.ACTION_MAIN);
       galleryApp.addCategory(Intent.CATEGORY_APP_GALLERY);
       galleryApp.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

@@ -82,14 +82,36 @@ const LiveLocationOverlay = memo(({ selectedProject }: { selectedProject: any })
     });
   }, []);
 
-  const { gps, locationData } = locState;
+  const { gps, isLive, diagnostic, locationData } = locState;
   const formattedLocation = getFormattedLocationText(locationData, selectedProject);
+
+  let gpsLabel = 'SIN GPS';
+  let gpsColor = 'text-yellow-400 animate-pulse';
+
+  if (gps) {
+    if (isLive) {
+      gpsLabel = `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}`;
+      gpsColor = 'text-green-400';
+    } else {
+      gpsLabel = `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)} (CACHÉ)`;
+      gpsColor = 'text-amber-300';
+    }
+  } else if (diagnostic?.status === 'location_disabled') {
+    gpsLabel = 'SIN GPS (GPS DESACTIVADO)';
+    gpsColor = 'text-red-400';
+  } else if (diagnostic?.status === 'permission_denied') {
+    gpsLabel = 'SIN GPS (PERMISOS DENEGADOS)';
+    gpsColor = 'text-red-400';
+  } else if (diagnostic?.status === 'acquiring') {
+    gpsLabel = 'BUSCANDO GPS...';
+    gpsColor = 'text-yellow-400 animate-pulse';
+  }
 
   return (
     <>
       {selectedProject.showGps && (
-        <p className={`line-clamp-4 break-words whitespace-pre-wrap ${gps ? 'text-green-400' : 'text-yellow-400 animate-pulse'}`}>
-          {gps ? `${gps.lat.toFixed(6)}, ${gps.lon.toFixed(6)}` : 'SIN GPS'}
+        <p className={`line-clamp-4 break-words whitespace-pre-wrap ${gpsColor}`}>
+          {gpsLabel}
         </p>
       )}
       {selectedProject.showLocation && formattedLocation && formattedLocation !== "Buscando..." && (
@@ -231,21 +253,56 @@ export default function App() {
   const onCameraTouchStart = (e: TouchEvent) => { if (e.touches.length===2) { const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY; pinchStartDist.current=Math.hypot(dx,dy); pinchStartZoom.current=cameraZoom; } };
   const onCameraTouchMove = (e: TouchEvent) => { if (e.touches.length===2 && pinchStartDist.current) { const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY; void applyNativeZoom(Math.max(1,Math.min(8,pinchStartZoom.current*(Math.hypot(dx,dy)/pinchStartDist.current)))); } };
   const onCameraTouchEnd = () => { pinchStartDist.current=null; };
+  const ensureFlashArmed = async (targetMode: 'off' | 'on') => {
+    try {
+      if (targetMode === 'on') {
+        // En Android CameraX / CameraPreview, tras takePicture() el hardware requiere
+        // que el estado se re-arme explícitamente en el pipeline nativo para que cada
+        // fotografía consecutiva dispare el flash físico sin reiniciar la cámara.
+        await CameraPreview.setFlashMode({ flashMode: 'off' }).catch(() => {});
+        await CameraPreview.setFlashMode({ flashMode: 'on' });
+        const check = await CameraPreview.getFlashMode().catch(() => null);
+        if (check && check.flashMode !== 'on') {
+          await CameraPreview.setFlashMode({ flashMode: 'on' });
+        }
+      } else {
+        await CameraPreview.setFlashMode({ flashMode: 'off' });
+      }
+    } catch (err) {
+      console.warn('[Camera] ensureFlashArmed error:', err);
+    }
+  };
+
   useEffect(() => {
     if (currentStep !== 'camera') return;
-    let active=true;
-    // Request fresh location fix immediately when opening camera
+    let active = true;
+    // Iniciar rastreo continuo y forzar lectura de posición fresca al abrir la cámara
+    void locationService.startWatching();
     void locationService.getCurrentPosition();
-    (async () => { try {
-      await CameraPreview.start({ position:'rear', toBack:true, aspectRatio:'fill', aspectMode:'cover', storeToFile:false, disableAudio:true, initialZoomLevel:1, rotateWhenOrientationChanged:true });
-      if (!active) return;
-      await CameraPreview.setFlashMode({ flashMode });
-      await CameraPreview.setZoom({ level: cameraZoom });
-    } catch (error) { console.error('[Camera] start:',error); } })();
-    return () => { active=false; void CameraPreview.stop({ force:true }).catch((error)=>console.warn('[Camera] stop:',error)); };
+
+    (async () => {
+      try {
+        await CameraPreview.start({ position: 'rear', toBack: true, aspectRatio: 'fill', aspectMode: 'cover', storeToFile: false, disableAudio: true, initialZoomLevel: 1, rotateWhenOrientationChanged: true });
+        if (!active) return;
+        await CameraPreview.setZoom({ level: cameraZoom });
+        await ensureFlashArmed(flashMode);
+      } catch (error) {
+        console.error('[Camera] start:', error);
+      }
+    })();
+
+    return () => {
+      active = false;
+      void CameraPreview.setFlashMode({ flashMode: 'off' }).catch(() => {});
+      void CameraPreview.stop({ force: true }).catch((error) => console.warn('[Camera] stop:', error));
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep]);
-  useEffect(() => { if (currentStep !== 'camera') return; void CameraPreview.setFlashMode({ flashMode }).catch((error)=>console.warn('[Camera] flash:',error)); }, [flashMode,currentStep]);
+
+  useEffect(() => {
+    if (currentStep !== 'camera') return;
+    void ensureFlashArmed(flashMode);
+  }, [flashMode, currentStep]);
 
 
   useEffect(() => {
@@ -256,13 +313,10 @@ export default function App() {
   useEffect(() => {
     loadData();
     void locationService.checkAndRequestPermissions().then(() => {
-      void locationService.getCurrentPosition();
+      void locationService.startWatching();
     });
-    const watchPromise = locationService.watchPosition();
     return () => {
-      watchPromise.then(id => {
-        if (id) locationService.clearWatch(id);
-      });
+      void locationService.stopWatching();
     };
   }, []);
 
@@ -405,6 +459,11 @@ export default function App() {
     }
 
     try {
+      // Re-armar el flash nativo si está en 'on' antes de la captura
+      if (flashMode === 'on') {
+        await ensureFlashArmed('on');
+      }
+
       // Captura optimizada a 1920x1440 max / calidad 80 para puente nativo ultra-rápido (<150ms)
       const captureResult = await CameraPreview.capture({ width: 1920, quality: 80, format: 'jpeg' });
       const capturedValue = captureResult?.value;
@@ -414,11 +473,15 @@ export default function App() {
       // Liberar obturador instantáneamente
       setIsProcessing(false);
 
-      // Intentar forzar una lectura fresca ANTES de capturar los metadatos
-      await locationService.getFreshGps();
-      const { gps, locationData } = locationService.getCurrentState();
-      const hasGps = !!(gps && gps.lat != null && gps.lon != null);
-      const gpsLabel = hasGps ? `${gps!.lat.toFixed(6)}, ${gps!.lon.toFixed(6)}` : 'SIN GPS';
+      // Obtener coordenada fresca o fallback en caché
+      const freshGps = await locationService.getFreshGps();
+      const { gps: stateGps, locationData, isLive } = locationService.getCurrentState();
+      const activeGps = freshGps || stateGps;
+      const hasGps = !!(activeGps && activeGps.lat != null && activeGps.lon != null);
+      const isActualLive = activeGps?.source === 'live' || (isLive && activeGps === freshGps);
+      const gpsLabel = hasGps
+        ? (isActualLive ? `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)}` : `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)} (CACHÉ)`)
+        : 'SIN GPS';
       const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
       const ubicacionText = hasGps && currentFormattedLocation && currentFormattedLocation !== "Buscando..."
         ? currentFormattedLocation
@@ -453,9 +516,10 @@ export default function App() {
         fecha,
         hora,
         timestamp,
-        latitude: hasGps ? gps!.lat : null,
-        longitude: hasGps ? gps!.lon : null,
-        gpsAccuracy: hasGps ? gps!.accuracy : undefined,
+        latitude: hasGps ? activeGps!.lat : null,
+        longitude: hasGps ? activeGps!.lon : null,
+        gpsAccuracy: hasGps ? activeGps!.accuracy : undefined,
+        gpsSource: hasGps ? (isActualLive ? 'live' : 'cache') : 'none',
         gpsCapturedAt: hasGps ? capturedAt : undefined,
         gpsLabel,
         ubicacion: ubicacionText,
@@ -521,6 +585,11 @@ export default function App() {
     } catch (e: any) {
       console.error('Batch capture error', e);
       setIsProcessing(false);
+    } finally {
+      // Re-armar el flash inmediatamente para la siguiente captura consecutiva
+      if (flashMode === 'on') {
+        void ensureFlashArmed('on');
+      }
     }
   };
 
@@ -1357,7 +1426,9 @@ export default function App() {
               <button
                 type="button"
                 onClick={async () => {
-                  const next = flashMode === 'off' ? 'on' : 'off'; setFlashMode(next); await CameraPreview.setFlashMode({ flashMode: next }).catch((error) => console.warn('[Camera] flash:', error));
+                  const next = flashMode === 'off' ? 'on' : 'off';
+                  setFlashMode(next);
+                  await ensureFlashArmed(next);
                 }}
                 className="w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white active:scale-95"
                 title="Flash"

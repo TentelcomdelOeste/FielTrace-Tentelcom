@@ -43,8 +43,8 @@ public class MainActivity extends BridgeActivity {
       settings.setMediaPlaybackRequiresUserGesture(false);
       settings.setDomStorageEnabled(true);
       settings.setJavaScriptEnabled(true);
-                webView.setBackgroundColor(Color.TRANSPARENT);
-                webView.getRootView().setBackgroundColor(Color.TRANSPARENT);
+      webView.setBackgroundColor(Color.TRANSPARENT);
+      webView.getRootView().setBackgroundColor(Color.TRANSPARENT);
       webView.setLayerType(WebView.LAYER_TYPE_HARDWARE, null);
       try {
         webView.addJavascriptInterface(new FieldTraceBridge(), "FieldTraceNative");
@@ -74,7 +74,7 @@ public class MainActivity extends BridgeActivity {
         return;
       }
       try {
-        Uri uri = Uri.parse(uriString.trim());
+        Uri uri = resolveImageContentUri(uriString.trim());
         Intent intent = new Intent(Intent.ACTION_VIEW);
         intent.setDataAndType(uri, "image/*");
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

@@ -38,7 +38,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install deps
         run: npm ci || npm install
@@ -58,6 +58,7 @@ jobs:
       - name: Restore MainActivity after sync
         run: |
           git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'getLatestFieldTraceThumbnailBase64' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'listFieldTracePhotos' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'openFieldTraceAlbum' android/app/src/main/java/com/fieldtrace/app/MainActivity.java

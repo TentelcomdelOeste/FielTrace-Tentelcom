@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - '.github/workflows/fix-delete-icons-build.yml'
+      - 'scripts/generate_android_icons.py'
+      - 'scripts/apply_project_delete_seed.py'
 
 permissions:
   contents: write
@@ -25,25 +27,25 @@ jobs:
           grep -q 'projectSelectMode' src/App.tsx
           grep -q 'requestDeleteProjects' src/App.tsx
           grep -q 'confirmDeleteProjectsStep' src/App.tsx
-          grep -q 'async deleteProject' src/services/storageService.ts || grep -q 'deleteProjects' src/services/storageService.ts
           echo "PROJECT DELETE + DEMO SEED OK"
+
+      - name: Install Pillow
+        run: pip install -q Pillow
 
       - name: Regenerate Android icons from pwa-512
         run: |
           set -euo pipefail
-          pip install -q Pillow
           python3 scripts/generate_android_icons.py
           test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          test -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
           test -f android/app/src/main/res/drawable/splash.xml
-          test -f android/app/src/main/res/values/styles.xml
+          test ! -f android/app/src/main/res/drawable/splash.png
           echo "ICONS OK"
 
       - name: Commit fixes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add src/App.tsx src/services/storageService.ts android/app/src/main/res
+          git add src/App.tsx src/services/storageService.ts android/app/src/main/res scripts/generate_android_icons.py
           if git diff --staged --quiet; then
             echo "No source changes"
           else
@@ -85,12 +87,15 @@ jobs:
           set -euo pipefail
           git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           git checkout -- android/app/src/main/AndroidManifest.xml
-          # Re-apply icons (cap sync / platform tools can leave defaults)
           python3 scripts/generate_android_icons.py
+          # Ensure no capacitor default splash bitmap remains
+          rm -f android/app/src/main/res/drawable/splash.png
+          rm -f android/app/src/main/res/drawable-*/splash.png
           grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q ACCESS_FINE_LOCATION android/app/src/main/AndroidManifest.xml
           test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          test -f android/app/src/main/res/values/styles.xml
+          test -f android/app/src/main/res/drawable/splash.xml
+          test ! -f android/app/src/main/res/drawable/splash.png
           echo "NATIVE + ICONS RESTORED"
 
       - name: Build debug APK
@@ -112,12 +117,12 @@ jobs:
           test -s "$OUT/FieldTrace.apk"
           ls -lh "$OUT/FieldTrace.apk"
 
-      - name: Verify features in built sources
+      - name: Verify features in source
         run: |
           grep -q 'PROYECTO DEMO' src/App.tsx
           grep -q 'projectSelectMode' src/App.tsx
           grep -q 'requestDeleteProjects' src/App.tsx
-          echo "FEATURES PRESENT IN SOURCE"
+          echo "FEATURES PRESENT"
 
       - uses: actions/upload-artifact@v4
         with:

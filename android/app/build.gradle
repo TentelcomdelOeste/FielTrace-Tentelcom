@@ -23,10 +23,10 @@ android {
         }
     }
 
-    // Nombre del APK descargable: FieldTrace-debug.apk / FieldTrace-release.apk
+    // Nombre del APK: solo el de la app
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
-            outputFileName = "FieldTrace-${variant.buildType.name}.apk"
+            outputFileName = "FieldTrace.apk"
         }
     }
 }

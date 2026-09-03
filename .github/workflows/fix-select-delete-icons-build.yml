@@ -1,0 +1,116 @@
+name: Fix select/delete + icons + Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fix-select-delete-icons-build.yml'
+      - 'scripts/fix_select_delete_icons.py'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Pillow
+        run: pip install -q Pillow
+
+      - name: Apply select/delete helpers + regenerate icons
+        run: |
+          set -euo pipefail
+          python3 scripts/fix_select_delete_icons.py
+          grep -q 'const toggleProjectSelect' src/App.tsx
+          grep -q 'const requestDeleteProjects' src/App.tsx
+          grep -q 'const executeDeleteProjects' src/App.tsx
+          grep -q 'const clearProjectSelection' src/App.tsx
+          grep -q 'confirmDeleteProjectsStep === 1' src/App.tsx
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          test -f android/app/src/main/res/drawable/splash.xml
+          test -f android/app/src/main/res/values-v31/styles.xml
+          test ! -f android/app/src/main/res/drawable/splash.png
+          echo "FIX OK"
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx android/app/src/main/res scripts/fix_select_delete_icons.py
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "fix: helpers select/delete + iconos safe-zone + splash blanco Android 12"
+            git push
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Cap sync
+        run: |
+          if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Restore native + re-apply icons after sync
+        run: |
+          set -euo pipefail
+          git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          git checkout -- android/app/src/main/AndroidManifest.xml
+          python3 scripts/fix_select_delete_icons.py
+          rm -f android/app/src/main/res/drawable/splash.png
+          rm -f android/app/src/main/res/drawable-*/splash.png
+          grep -q 'const toggleProjectSelect' src/App.tsx
+          grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          test -f android/app/src/main/res/values-v31/styles.xml
+          echo "RESTORED"
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK to FieldTrace.apk
+        run: |
+          set -euo pipefail
+          OUT="android/app/build/outputs/apk/debug"
+          ls -la "$OUT" || true
+          if [ ! -f "$OUT/FieldTrace.apk" ]; then
+            SRC=$(ls -1t "$OUT"/*.apk 2>/dev/null | head -1 || true)
+            test -n "$SRC"
+            mv "$SRC" "$OUT/FieldTrace.apk"
+          fi
+          test -s "$OUT/FieldTrace.apk"
+          ls -lh "$OUT/FieldTrace.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FieldTrace-apk
+          path: android/app/build/outputs/apk/debug/FieldTrace.apk
+          if-no-files-found: error

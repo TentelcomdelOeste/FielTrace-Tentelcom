@@ -304,6 +304,18 @@ export const storageService = {
     await manager.delete(STORE_EVIDENCES, id);
   },
 
+  async deleteAllEvidencesByProject(projectId: number): Promise<number> {
+    const list = await this.getEvidencesByProject(projectId);
+    let n = 0;
+    for (const ev of list) {
+      if (ev.id != null) {
+        await manager.delete(STORE_EVIDENCES, ev.id);
+        n += 1;
+      }
+    }
+    return n;
+  },
+
   async saveTemplate(template: Template): Promise<number> {
     const uuid = crypto.randomUUID ? crypto.randomUUID() : 'tpl_' + Date.now();
     return manager.add(STORE_TEMPLATES, { ...template, uuid });

@@ -316,6 +316,21 @@ export const storageService = {
     return n;
   },
 
+  async deleteProject(projectId: number): Promise<void> {
+    await this.deleteAllEvidencesByProject(projectId);
+    await manager.delete(STORE_PROJECTS, projectId);
+  },
+
+  async deleteProjects(projectIds: number[]): Promise<number> {
+    let n = 0;
+    for (const id of projectIds) {
+      if (id == null) continue;
+      await this.deleteProject(id);
+      n += 1;
+    }
+    return n;
+  },
+
   async saveTemplate(template: Template): Promise<number> {
     const uuid = crypto.randomUUID ? crypto.randomUUID() : 'tpl_' + Date.now();
     return manager.add(STORE_TEMPLATES, { ...template, uuid });

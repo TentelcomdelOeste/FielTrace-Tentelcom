@@ -233,6 +233,9 @@ export default function App() {
   const [galleryThumbs, setGalleryThumbs] = useState<Array<{ uri: string; thumb: string }>>([]);
   const [galleryLoading, setGalleryLoading] = useState(false);
   const [showPhotoViewer, setShowPhotoViewer] = useState(false);
+  const [gallerySelectMode, setGallerySelectMode] = useState(false);
+  const [selectedGalleryUris, setSelectedGalleryUris] = useState<string[]>([]);
+  const [confirmDeleteGalleryStep, setConfirmDeleteGalleryStep] = useState<0 | 1 | 2>(0);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerFullImages, setViewerFullImages] = useState<Record<string, string>>({});
   const [showEvidenceList, setShowEvidenceList] = useState(false);
@@ -734,7 +737,77 @@ export default function App() {
     const safe = Math.max(0, Math.min(index, galleryThumbs.length - 1));
     setViewerIndex(safe);
     setShowPhotoViewer(true);
+  }
+
+  const toggleGallerySelect = (uri: string) => {
+    setSelectedGalleryUris((prev) =>
+      prev.includes(uri) ? prev.filter((u) => u !== uri) : [...prev, uri]
+    );
   };
+
+  const clearGallerySelection = () => {
+    setSelectedGalleryUris([]);
+    setGallerySelectMode(false);
+  };
+
+  const shareSelectedGallery = (uris?: string[]) => {
+    const list = uris && uris.length ? uris : selectedGalleryUris;
+    if (!list.length) return;
+    try {
+      const native = (window as any).FieldTraceNative;
+      if (native && typeof native.shareUris === 'function') {
+        native.shareUris(JSON.stringify(list));
+      } else {
+        console.warn('[Gallery] shareUris not available');
+      }
+    } catch (e) {
+      console.error('[Gallery] share failed', e);
+    }
+  };
+
+  const requestDeleteGallery = (uris?: string[]) => {
+    const list = uris && uris.length ? uris : selectedGalleryUris;
+    if (!list.length) return;
+    setSelectedGalleryUris(list);
+    setConfirmDeleteGalleryStep(1);
+  };
+
+  const executeDeleteGallery = async () => {
+    const list = [...selectedGalleryUris];
+    if (!list.length) {
+      setConfirmDeleteGalleryStep(0);
+      return;
+    }
+    try {
+      const native = (window as any).FieldTraceNative;
+      if (native && typeof native.deleteUris === 'function') {
+        native.deleteUris(JSON.stringify(list));
+      }
+      const remaining = galleryThumbs.filter((p) => !list.includes(p.uri));
+      setGalleryThumbs(remaining);
+      if (showPhotoViewer) {
+        if (remaining.length === 0) {
+          setShowPhotoViewer(false);
+        } else {
+          setViewerIndex((i) => Math.min(i, remaining.length - 1));
+        }
+      }
+      clearGallerySelection();
+      try {
+        const photos = await cameraService.listAlbumPhotos(60);
+        const mapped = (photos || []).map((p: any) => ({
+          uri: p.uri,
+          thumb: p.thumb || p.uri,
+        }));
+        setGalleryThumbs(mapped);
+      } catch (_) {}
+    } catch (e) {
+      console.error('[Gallery] delete failed', e);
+    } finally {
+      setConfirmDeleteGalleryStep(0);
+    }
+  };
+;
 
   // Cargar imagen de alta calidad al cambiar de foto en el visor in-app
   useEffect(() => {
@@ -1809,22 +1882,47 @@ export default function App() {
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
               <button
                 type="button"
-                onClick={() => setShowGalleryGrid(false)}
+                onClick={() => { clearGallerySelection(); setShowGalleryGrid(false); }}
                 className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
-              <h2 className="text-sm font-black uppercase tracking-tight text-white">Field Trace</h2>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowGalleryGrid(false);
-                  void cameraService.openFieldTraceAlbum(true);
-                }}
-                className="text-[10px] font-black uppercase text-blue-400 px-2 py-2"
-              >
-                Galeria
-              </button>
+              <h2 className="text-sm font-black uppercase tracking-tight text-white">
+                {gallerySelectMode
+                  ? (selectedGalleryUris.length ? `${selectedGalleryUris.length} seleccionada(s)` : 'Seleccionar')
+                  : 'Field Trace'}
+              </h2>
+              <div className="flex items-center gap-1">
+                {!gallerySelectMode ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => { setGallerySelectMode(true); setSelectedGalleryUris([]); }}
+                      className="text-[10px] font-black uppercase text-blue-400 px-2 py-2"
+                    >
+                      Seleccionar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowGalleryGrid(false);
+                        void cameraService.openFieldTraceAlbum(true);
+                      }}
+                      className="text-[10px] font-black uppercase text-white/50 px-2 py-2"
+                    >
+                      Galeria
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={clearGallerySelection}
+                    className="text-[10px] font-black uppercase text-white/70 px-2 py-2"
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {galleryLoading && (
@@ -1838,19 +1936,54 @@ export default function App() {
               )}
               {!galleryLoading && galleryThumbs.length > 0 && (
                 <div className="grid grid-cols-3 gap-1.5">
-                  {galleryThumbs.map((item, idx) => (
-                    <button
-                      key={item.uri}
-                      type="button"
-                      className="aspect-square rounded-lg overflow-hidden bg-white/5 active:opacity-80"
-                      onClick={() => openPhotoViewer(idx)}
-                    >
-                      <img src={item.thumb} alt="" className="w-full h-full object-cover" />
-                    </button>
-                  ))}
+                  {galleryThumbs.map((item, idx) => {
+                    const isSel = selectedGalleryUris.includes(item.uri);
+                    return (
+                      <button
+                        key={item.uri}
+                        type="button"
+                        className={`relative aspect-square rounded-lg overflow-hidden bg-white/5 active:opacity-80 ${isSel ? 'ring-2 ring-blue-500' : ''}`}
+                        onClick={() => {
+                          if (gallerySelectMode) toggleGallerySelect(item.uri);
+                          else openPhotoViewer(idx);
+                        }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          if (!gallerySelectMode) setGallerySelectMode(true);
+                          toggleGallerySelect(item.uri);
+                        }}
+                      >
+                        <img src={item.thumb} alt="" className="w-full h-full object-cover" />
+                        {gallerySelectMode && (
+                          <span className={`absolute top-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center ${isSel ? 'bg-blue-500 text-white' : 'bg-black/40 border border-white/40 text-transparent'}`}>
+                            <CheckCircle2 className="w-4 h-4" />
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
+
+            {gallerySelectMode && selectedGalleryUris.length > 0 && (
+              <div className="shrink-0 border-t border-white/10 px-4 py-3 flex gap-3 bg-black/90">
+                <button
+                  type="button"
+                  onClick={() => shareSelectedGallery()}
+                  className="flex-1 py-3 rounded-2xl bg-white/10 text-white text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-2"
+                >
+                  <Share2 className="w-4 h-4" /> Compartir
+                </button>
+                <button
+                  type="button"
+                  onClick={() => requestDeleteGallery()}
+                  className="flex-1 py-3 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider flex items-center justify-center gap-2"
+                >
+                  <Trash2 className="w-4 h-4" /> Eliminar
+                </button>
+              </div>
+            )}
             <p className="text-center text-[9px] text-white/30 py-2 shrink-0">Toca una foto para abrir · desliza para ver otras</p>
           </motion.div>
         )}
@@ -1933,9 +2066,31 @@ export default function App() {
               )}
             </div>
 
-            <p className="text-center text-[9px] text-white/35 py-3 shrink-0">
-              Desliza izquierda / derecha para ver otras fotos
-            </p>
+            <div className="shrink-0 border-t border-white/10 px-4 py-3 flex items-center justify-between gap-3 bg-black">
+              <p className="text-[9px] text-white/35">Desliza para ver otras</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const uri = galleryThumbs[viewerIndex]?.uri;
+                    if (uri) shareSelectedGallery([uri]);
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-white/10 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5"
+                >
+                  <Share2 className="w-3.5 h-3.5" /> Compartir
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const uri = galleryThumbs[viewerIndex]?.uri;
+                    if (uri) requestDeleteGallery([uri]);
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-red-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Eliminar
+                </button>
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2144,6 +2299,42 @@ export default function App() {
           </motion.div>
         )}
 
+
+
+        {confirmDeleteGalleryStep === 1 && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[210] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
+              <h3 className="text-base font-black uppercase tracking-tight text-gray-950">
+                {selectedGalleryUris.length === 1 ? '¿Eliminar foto?' : `¿Eliminar ${selectedGalleryUris.length} fotos?`}
+              </h3>
+              <p className="text-sm text-gray-600">
+                Se eliminarán del álbum Field Trace del dispositivo.
+              </p>
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setConfirmDeleteGalleryStep(0)} className="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-700 text-[11px] font-black uppercase tracking-wider">Cancelar</button>
+                <button type="button" onClick={() => setConfirmDeleteGalleryStep(2)} className="flex-1 py-3.5 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider">Continuar</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {confirmDeleteGalleryStep === 2 && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[211] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl border-2 border-red-200">
+              <h3 className="text-base font-black uppercase tracking-tight text-red-700">Confirmación final</h3>
+              <p className="text-sm text-gray-600">
+                Esta acción <span className="font-bold text-red-600">no se puede deshacer</span>.
+                {selectedGalleryUris.length === 1
+                  ? ' ¿Eliminar definitivamente esta foto?'
+                  : ` ¿Eliminar definitivamente ${selectedGalleryUris.length} fotos?`}
+              </p>
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setConfirmDeleteGalleryStep(0)} className="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-700 text-[11px] font-black uppercase tracking-wider">Cancelar</button>
+                <button type="button" onClick={() => { void executeDeleteGallery(); }} className="flex-1 py-3.5 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider">Sí, eliminar</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
 
         {confirmDeleteProjectsStep === 1 && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">

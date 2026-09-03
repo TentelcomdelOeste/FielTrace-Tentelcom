@@ -517,6 +517,56 @@ export default function App() {
     setCurrentStep('history');
   };
 
+  const toggleProjectSelect = (id: number) => {
+    setSelectedProjectIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const clearProjectSelection = () => {
+    setSelectedProjectIds([]);
+    setProjectSelectMode(false);
+  };
+
+  const requestDeleteProjects = (ids: number[]) => {
+    const unique = Array.from(new Set(ids.filter((id) => id != null)));
+    if (!unique.length) return;
+    setPendingDeleteProjectIds(unique);
+    setConfirmDeleteProjectsStep(1);
+  };
+
+  const executeDeleteProjects = async () => {
+    const ids = pendingDeleteProjectIds;
+    if (!ids.length) {
+      setConfirmDeleteProjectsStep(0);
+      return;
+    }
+    try {
+      if ((storageService as any).deleteProjects) {
+        await (storageService as any).deleteProjects(ids);
+      } else {
+        for (const id of ids) {
+          if ((storageService as any).deleteAllEvidencesByProject) {
+            await (storageService as any).deleteAllEvidencesByProject(id);
+          }
+          await (storageService as any).deleteProject?.(id);
+        }
+      }
+      if (selectedProject?.id != null && ids.includes(selectedProject.id)) {
+        setSelectedProject(null);
+        setEvidences([]);
+        setCurrentStep('home');
+      }
+      clearProjectSelection();
+      await loadData();
+    } catch (e) {
+      console.error('[Projects] delete failed', e);
+    } finally {
+      setPendingDeleteProjectIds([]);
+      setConfirmDeleteProjectsStep(0);
+    }
+  };
+
   const captureBatchPhoto = async () => {
     // Anti doble-tap con ref (sin spinner ni disabled en el botón)
     if (!selectedProject || capturingRef.current) return;

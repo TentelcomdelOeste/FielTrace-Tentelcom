@@ -20,6 +20,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
 
 public class MainActivity extends BridgeActivity {
   private static final String ALBUM_NAME = "Field Trace";
@@ -122,16 +123,11 @@ public class MainActivity extends BridgeActivity {
       throw new IllegalArgumentException("Image not found in MediaStore: " + path);
     }
 
-    /** Opens system gallery (legacy fallback). Prefer openFieldTraceAlbum. */
     @JavascriptInterface
     public void openGallery() {
       openFieldTraceAlbum();
     }
 
-    /**
-     * Open the Field Trace album: try latest photo in album (most OEMs then allow swipe),
-     * then generic gallery fallbacks.
-     */
     @JavascriptInterface
     public void openFieldTraceAlbum() {
       try {
@@ -168,7 +164,6 @@ public class MainActivity extends BridgeActivity {
       } catch (Exception ignored) {}
     }
 
-    /** Content URI of the newest image in the Field Trace album, or empty string. */
     @JavascriptInterface
     public String getLatestFieldTracePhotoUri() {
       try {
@@ -177,21 +172,17 @@ public class MainActivity extends BridgeActivity {
           MediaStore.Images.Media.BUCKET_DISPLAY_NAME,
           MediaStore.Images.Media.DATE_ADDED
         };
-        String selection = MediaStore.Images.Media.BUCKET_DISPLAY_NAME + "=?";
-        String[] selectionArgs = new String[]{ ALBUM_NAME };
-        String sort = MediaStore.Images.Media.DATE_ADDED + " DESC";
         try (Cursor cursor = getContentResolver().query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
-            selection,
-            selectionArgs,
-            sort)) {
+            MediaStore.Images.Media.BUCKET_DISPLAY_NAME + "=?",
+            new String[]{ ALBUM_NAME },
+            MediaStore.Images.Media.DATE_ADDED + " DESC")) {
           if (cursor != null && cursor.moveToFirst()) {
             long id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID));
             return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id).toString();
           }
         }
-        // Fallback: path-based album (plugin often stores under DCIM/Field Trace)
         try (Cursor cursor = getContentResolver().query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             new String[]{ MediaStore.Images.Media._ID, MediaStore.Images.Media.DATA },
@@ -207,9 +198,6 @@ public class MainActivity extends BridgeActivity {
       return "";
     }
 
-    /**
-     * JSON array of { uri, id } for photos in Field Trace album (newest first).
-     */
     @JavascriptInterface
     public String listFieldTracePhotos(int limit) {
       JSONArray arr = new JSONArray();
@@ -265,14 +253,11 @@ public class MainActivity extends BridgeActivity {
       return arr.toString();
     }
 
-    /**
-     * Small JPEG data-URL thumbnail for content/file URI (for camera bar / grid).
-     */
     @JavascriptInterface
     public String getPhotoThumbnailBase64(String uriString, int maxSide) {
       if (uriString == null || uriString.trim().isEmpty()) return "";
       if (maxSide <= 0) maxSide = 256;
-      if (maxSide > 512) maxSide = 512;
+      if (maxSide > 2048) maxSide = 2048;
       try {
         Uri uri = Uri.parse(uriString.trim());
         if (!"content".equalsIgnoreCase(uri.getScheme()) && !"file".equalsIgnoreCase(uri.getScheme())) {
@@ -312,7 +297,8 @@ public class MainActivity extends BridgeActivity {
           }
         }
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        bmp.compress(Bitmap.CompressFormat.JPEG, 72, baos);
+        int quality = maxSide > 512 ? 85 : 72;
+        bmp.compress(Bitmap.CompressFormat.JPEG, quality, baos);
         bmp.recycle();
         String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
         return "data:image/jpeg;base64," + b64;
@@ -321,7 +307,6 @@ public class MainActivity extends BridgeActivity {
       }
     }
 
-    /** Convenience: latest album photo as data-URL thumbnail. */
     @JavascriptInterface
     public String getLatestFieldTraceThumbnailBase64(int maxSide) {
       try {
@@ -331,6 +316,68 @@ public class MainActivity extends BridgeActivity {
       } catch (Exception e) {
         return "";
       }
+    }
+
+    @JavascriptInterface
+    public int deleteUris(String urisJson) {
+      int deleted = 0;
+      if (urisJson == null || urisJson.trim().isEmpty()) return 0;
+      try {
+        JSONArray arr = new JSONArray(urisJson);
+        for (int i = 0; i < arr.length(); i++) {
+          String s = arr.optString(i, "");
+          if (s.isEmpty()) continue;
+          try {
+            Uri uri = Uri.parse(s);
+            int n = getContentResolver().delete(uri, null, null);
+            if (n > 0) deleted += n;
+          } catch (Exception ignored) {}
+        }
+      } catch (Exception ignored) {}
+      return deleted;
+    }
+
+    @JavascriptInterface
+    public int deleteUri(String uriString) {
+      if (uriString == null || uriString.trim().isEmpty()) return 0;
+      try {
+        return getContentResolver().delete(Uri.parse(uriString.trim()), null, null);
+      } catch (Exception e) {
+        return 0;
+      }
+    }
+
+    @JavascriptInterface
+    public void shareUris(String urisJson) {
+      if (urisJson == null || urisJson.trim().isEmpty()) return;
+      try {
+        JSONArray arr = new JSONArray(urisJson);
+        ArrayList<Uri> uris = new ArrayList<>();
+        for (int i = 0; i < arr.length(); i++) {
+          String s = arr.optString(i, "");
+          if (s.isEmpty()) continue;
+          try {
+            Uri u = Uri.parse(s);
+            uris.add(u);
+          } catch (Exception ignored) {}
+        }
+        if (uris.isEmpty()) return;
+        Intent intent;
+        if (uris.size() == 1) {
+          intent = new Intent(Intent.ACTION_SEND);
+          intent.setType("image/jpeg");
+          intent.putExtra(Intent.EXTRA_STREAM, uris.get(0));
+        } else {
+          intent = new Intent(Intent.ACTION_SEND_MULTIPLE);
+          intent.setType("image/jpeg");
+          intent.putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris);
+        }
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        Intent chooser = Intent.createChooser(intent, "Compartir fotos Field Trace");
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(chooser);
+      } catch (Exception ignored) {}
     }
   }
 }

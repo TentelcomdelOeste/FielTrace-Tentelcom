@@ -91,6 +91,26 @@ jobs:
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
+      - name: Rename APK to FieldTrace.apk
+        run: |
+          set -euo pipefail
+          OUT="android/app/build/outputs/apk/debug"
+          ls -la "$OUT" || true
+          # Prefer already-named file; otherwise take the newest *.apk and rename
+          if [ -f "$OUT/FieldTrace.apk" ]; then
+            echo "Already FieldTrace.apk"
+          else
+            SRC=$(ls -1t "$OUT"/*.apk 2>/dev/null | head -1 || true)
+            if [ -z "$SRC" ]; then
+              echo "No APK found in $OUT"
+              find android/app/build/outputs -name '*.apk' -print || true
+              exit 1
+            fi
+            echo "Renaming $SRC -> $OUT/FieldTrace.apk"
+            mv "$SRC" "$OUT/FieldTrace.apk"
+          fi
+          test -s "$OUT/FieldTrace.apk"
+          ls -lh "$OUT/FieldTrace.apk"
       - name: Validate APK location permissions (aapt)
         run: |
           set -euo pipefail
@@ -127,6 +147,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FielTrace-native-camera-debug-apk
+          name: FieldTrace-apk
           path: android/app/build/outputs/apk/debug/FieldTrace.apk
           if-no-files-found: error

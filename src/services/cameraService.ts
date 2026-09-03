@@ -2,6 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Gallery save via @capacitor-community/media -> album Field Trace
+ * Thumbnail / album open via FieldTraceNative MediaStore bridge (Android)
  */
 
 import { Media } from '@capacitor-community/media';
@@ -10,6 +11,31 @@ import { Capacitor } from '@capacitor/core';
 let _cachedAlbumIdentifier: string | null = null;
 let _lastSavedPath: string | null = null;
 const ALBUM_NAME = 'Field Trace';
+const LS_LAST_PATH = 'ft_last_photo_path';
+
+function getNative(): any {
+  return (window as any).FieldTraceNative || null;
+}
+
+function loadPersistedPath(): string | null {
+  try {
+    const v = localStorage.getItem(LS_LAST_PATH);
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistPath(path: string | null) {
+  try {
+    if (path) localStorage.setItem(LS_LAST_PATH, path);
+  } catch {
+    /* ignore */
+  }
+}
+
+// Restore last path from previous session
+_lastSavedPath = loadPersistedPath();
 
 export const cameraService = {
   async drawOverlay(imageSrc: string, metadata: any): Promise<string> {
@@ -31,8 +57,6 @@ export const cameraService = {
           let targetWidth = img.width;
           let targetHeight = img.height;
 
-          // Recortar la imagen capturada para que coincida exactamente con la relación de aspecto del visor en pantalla (WYSIWYG)
-          // Esto replica el comportamiento de aspectMode: 'cover' (FILL_CENTER) de la cámara nativa dentro del área visible.
           const vfRatio = metadata.viewfinder?.ratio
             || (metadata.viewfinder?.width && metadata.viewfinder?.height ? metadata.viewfinder.width / metadata.viewfinder.height : null)
             || (metadata.settings?.viewfinder?.ratio)
@@ -46,11 +70,9 @@ export const cameraService = {
           let sourceHeight = targetHeight;
 
           if (imageRatio > screenRatio) {
-            // La imagen es más ancha que la pantalla -> recortar lados (izquierda y derecha)
             sourceWidth = targetHeight * screenRatio;
             sourceX = (targetWidth - sourceWidth) / 2;
           } else if (imageRatio < screenRatio) {
-            // La imagen es más alta que la pantalla -> recortar arriba y abajo
             sourceHeight = targetWidth / screenRatio;
             sourceY = (targetHeight - sourceHeight) / 2;
           }
@@ -281,7 +303,10 @@ export const cameraService = {
       } as any);
       console.log('[Gallery] Saved to Field Trace album:', result);
       const path = (result as any)?.filePath || (result as any)?.path || (result as any)?.identifier || null;
-      if (path) _lastSavedPath = String(path);
+      if (path) {
+        _lastSavedPath = String(path);
+        persistPath(_lastSavedPath);
+      }
       return true;
     } catch (error: any) {
       console.error('[Gallery] Album save failed:', error?.code || error?.message || error);
@@ -297,7 +322,10 @@ export const cameraService = {
       } as any);
       console.log('[Gallery] Saved to Field Trace on retry:', result);
       const path2 = (result as any)?.filePath || (result as any)?.path || (result as any)?.identifier || null;
-      if (path2) _lastSavedPath = String(path2);
+      if (path2) {
+        _lastSavedPath = String(path2);
+        persistPath(_lastSavedPath);
+      }
       return true;
     } catch (error: any) {
       console.error('[Gallery] Retry album save failed:', error?.code || error?.message || error);
@@ -309,6 +337,11 @@ export const cameraService = {
         fileName: baseName,
       } as any);
       console.warn('[Gallery] Saved WITHOUT album (fallback):', result);
+      const path3 = (result as any)?.filePath || (result as any)?.path || (result as any)?.identifier || null;
+      if (path3) {
+        _lastSavedPath = String(path3);
+        persistPath(_lastSavedPath);
+      }
       return true;
     } catch (error: any) {
       console.error('[Gallery] Fallback save failed:', error?.code || error?.message || error);
@@ -378,20 +411,100 @@ export const cameraService = {
   },
 
   getLastSavedPath(): string | null {
-    return _lastSavedPath;
+    return _lastSavedPath || loadPersistedPath();
   },
 
+  /**
+   * Load a small data-URL of the latest Field Trace album photo (survives app restart).
+   * Never throws; returns null if album empty / native unavailable.
+   */
+  async getLastThumbnail(maxSide = 256): Promise<string | null> {
+    try {
+      const native = getNative();
+      if (native && typeof native.getLatestFieldTraceThumbnailBase64 === 'function') {
+        const thumb = native.getLatestFieldTraceThumbnailBase64(maxSide);
+        if (thumb && String(thumb).startsWith('data:image')) {
+          return String(thumb);
+        }
+      }
+      // Fallback: thumbnail from last known path
+      const path = this.getLastSavedPath();
+      if (path && native && typeof native.getPhotoThumbnailBase64 === 'function') {
+        const thumb2 = native.getPhotoThumbnailBase64(path, maxSide);
+        if (thumb2 && String(thumb2).startsWith('data:image')) {
+          return String(thumb2);
+        }
+      }
+    } catch (e) {
+      console.warn('[Gallery] getLastThumbnail failed', e);
+    }
+    return null;
+  },
+
+  /**
+   * List photos in Field Trace album (newest first).
+   * Returns { uri, id, thumb? }[]
+   */
+  async listAlbumPhotos(limit = 60): Promise<Array<{ uri: string; id?: number; thumb?: string }>> {
+    try {
+      const native = getNative();
+      if (!native || typeof native.listFieldTracePhotos !== 'function') {
+        return [];
+      }
+      const raw = native.listFieldTracePhotos(limit);
+      const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw;
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((p: any) => ({
+        uri: String(p.uri || ''),
+        id: p.id != null ? Number(p.id) : undefined,
+      })).filter((p: { uri: string }) => !!p.uri);
+    } catch (e) {
+      console.warn('[Gallery] listAlbumPhotos failed', e);
+      return [];
+    }
+  },
+
+  async getPhotoThumbnail(uri: string, maxSide = 256): Promise<string | null> {
+    try {
+      const native = getNative();
+      if (!native || typeof native.getPhotoThumbnailBase64 !== 'function') return null;
+      const thumb = native.getPhotoThumbnailBase64(uri, maxSide);
+      if (thumb && String(thumb).startsWith('data:image')) return String(thumb);
+    } catch (e) {
+      console.warn('[Gallery] getPhotoThumbnail failed', e);
+    }
+    return null;
+  },
+
+  /**
+   * Open Field Trace album / last photo in system viewer (swipe between album photos on most OEMs).
+   * Never opens an invalid URI alone (avoids broken-image screen).
+   */
   async openFieldTraceAlbum(preferLastPhoto = true): Promise<boolean> {
     try {
-      const native = (window as any).FieldTraceNative;
+      const native = getNative();
 
-      if (preferLastPhoto && _lastSavedPath && native) {
-        if (typeof native.openUri === 'function') {
+      if (native && typeof native.openFieldTraceAlbum === 'function') {
+        try {
+          native.openFieldTraceAlbum();
+          return true;
+        } catch (e) {
+          console.warn('[Gallery] openFieldTraceAlbum native failed', e);
+        }
+      }
+
+      if (preferLastPhoto && native) {
+        let uri = '';
+        if (typeof native.getLatestFieldTracePhotoUri === 'function') {
+          uri = String(native.getLatestFieldTracePhotoUri() || '');
+        }
+        if (!uri && _lastSavedPath) uri = _lastSavedPath;
+        if (uri && typeof native.openUri === 'function') {
           try {
-            native.openUri(_lastSavedPath);
+            native.openUri(uri);
             return true;
           } catch (e) {
-            console.warn('[Gallery] FieldTraceNative.openUri failed', e);
+            console.warn('[Gallery] openUri failed', e);
           }
         }
       }
@@ -401,7 +514,7 @@ export const cameraService = {
           native.openGallery();
           return true;
         } catch (e) {
-          console.warn('[Gallery] FieldTraceNative.openGallery failed', e);
+          console.warn('[Gallery] openGallery failed', e);
         }
       }
 
@@ -419,7 +532,6 @@ export const cameraService = {
         const intents = [
           'intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.APP_GALLERY;end',
           'intent:#Intent;action=android.intent.action.VIEW;type=image/*;end',
-          'intent://media/external/images/media#Intent;scheme=content;action=android.intent.action.VIEW;type=image/*;end',
         ];
         for (const url of intents) {
           try {
@@ -433,13 +545,6 @@ export const cameraService = {
             return true;
           } catch (_) {}
         }
-        try {
-          window.open('content://media/external/images/media', '_system');
-          return true;
-        } catch (_) {}
-      } else {
-        window.open('photos://', '_blank');
-        return true;
       }
     } catch (e) {
       console.warn('[Gallery] open failed', e);

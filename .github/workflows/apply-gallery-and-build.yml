@@ -1,0 +1,77 @@
+name: Apply Gallery UX + Build APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Apply gallery patches to App.tsx
+        run: |
+          python3 scripts/apply_gallery_app.py
+          grep -q 'getLastThumbnail' src/App.tsx
+          grep -q 'openGalleryGrid' src/App.tsx
+          grep -q 'showGalleryGrid' src/App.tsx
+          grep -q 'SIN GPS (GPS DESACTIVADO)' src/App.tsx
+          grep -q 'capturingRef.current = false' src/App.tsx
+          echo "APP GALLERY PATCH OK"
+
+      - name: Commit App.tsx if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx
+          if git diff --staged --quiet; then
+            echo "No App.tsx changes to commit"
+          else
+            git commit -m "feat(gallery): App.tsx thumbnail + grid for Field Trace album"
+            git push
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install deps
+        run: npm ci || npm install
+
+      - name: Build web
+        run: npm run build
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cap sync android
+        run: npx cap sync android
+
+      - name: Restore MainActivity after sync
+        run: |
+          git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'getLatestFieldTraceThumbnailBase64' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'listFieldTracePhotos' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'openFieldTraceAlbum' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          echo "NATIVE GALLERY BRIDGE OK"
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FielTrace-gallery-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

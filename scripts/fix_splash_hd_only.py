@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ONLY improve splash sharpness using 512 master. Do not touch launcher or App.tsx."""
+"""Temporary build helper: generate launcher + splash assets from the 512 master."""
 from pathlib import Path
 import sys
 
@@ -15,10 +15,7 @@ RES = ROOT / "android" / "app" / "src" / "main" / "res"
 PUBLIC = ROOT / "public"
 
 src = None
-for p in [
-    PUBLIC / "android-chrome-512x512.png",
-    PUBLIC / "pwa-512x512.png",
-]:
+for p in [PUBLIC / "android-chrome-512x512.png", PUBLIC / "pwa-512x512.png"]:
     if p.exists():
         src = p
         break
@@ -27,7 +24,7 @@ if src is None:
     sys.exit(1)
 
 img = Image.open(src).convert("RGBA")
-print("splash source", src, img.size)
+print("512 source", src, img.size)
 
 def fit(im, size):
     return im.resize((size, size), Image.Resampling.LANCZOS)
@@ -40,21 +37,34 @@ def padded(im, canvas_size, content_ratio):
     canvas.paste(icon, (off, off), icon)
     return canvas
 
-# Larger logo in splash (~75%) so more pixels of the 512 are visible / sharper
-SPLASH_RATIO = 0.75
+# Android adaptive-icon safe region: keep the logo around 61% of the 108dp canvas.
+LAUNCHER_RATIO = 0.61
+launcher_sizes = {
+    "mipmap-mdpi": 108,
+    "mipmap-hdpi": 162,
+    "mipmap-xhdpi": 216,
+    "mipmap-xxhdpi": 324,
+    "mipmap-xxxhdpi": 432,
+}
+for folder, size in launcher_sizes.items():
+    d = RES / folder
+    d.mkdir(parents=True, exist_ok=True)
+    foreground = padded(img, size, LAUNCHER_RATIO)
+    foreground.save(d / "ic_launcher_foreground.png", "PNG")
+    foreground.save(d / "ic_launcher.png", "PNG")
+    foreground.save(d / "ic_launcher_round.png", "PNG")
+    print("wrote launcher", folder, size)
 
+# Android 12+ splash: stay just inside the icon mask while retaining the 512px master detail.
+SPLASH_RATIO = 0.66
 drawable = RES / "drawable"
 drawable.mkdir(parents=True, exist_ok=True)
 for stale in ("splash.png", "splash.jpg", "splash.jpeg", "splash.webp"):
     p = drawable / stale
     if p.exists():
         p.unlink()
-        print("removed", p)
 
-# Master splash_icon at full 512 canvas from HD source
 padded(img, 512, SPLASH_RATIO).save(drawable / "splash_icon.png", "PNG")
-print("wrote drawable/splash_icon.png 512")
-
 (drawable / "splash.xml").write_text(
     """<?xml version="1.0" encoding="utf-8"?>
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
@@ -63,11 +73,8 @@ print("wrote drawable/splash_icon.png 512")
         <bitmap android:gravity="center" android:src="@drawable/splash_icon"/>
     </item>
 </layer-list>
-""",
-    encoding="utf-8",
-)
+""", encoding="utf-8")
 
-# High-density variants (no downscale below source detail)
 for folder, size in {
     "drawable-mdpi": 256,
     "drawable-hdpi": 384,
@@ -82,79 +89,21 @@ for folder, size in {
         p = d / stale
         if p.exists():
             p.unlink()
-    print("wrote", folder, size)
 
-# Ensure white splash background + theme hooks (do not alter launcher mipmaps)
-values = RES / "values"
-values.mkdir(parents=True, exist_ok=True)
-
-colors_path = values / "colors.xml"
-if colors_path.exists():
-    c = colors_path.read_text(encoding="utf-8")
-    if "splash_background" not in c:
-        c = c.replace("</resources>", '    <color name="splash_background">#FFFFFF</color>\n</resources>')
-        colors_path.write_text(c, encoding="utf-8")
-    else:
-        import re
-        c = re.sub(
-            r'<color name="splash_background">[^<]*</color>',
-            '<color name="splash_background">#FFFFFF</color>',
-            c,
-        )
-        colors_path.write_text(c, encoding="utf-8")
-else:
-    colors_path.write_text(
-        """<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <color name="colorPrimary">#2563EB</color>
-    <color name="colorPrimaryDark">#1D4ED8</color>
-    <color name="colorAccent">#2563EB</color>
-    <color name="splash_background">#FFFFFF</color>
-</resources>
-""",
-        encoding="utf-8",
-    )
-
-# Keep launch theme pointing at splash drawable + Android 12 attributes
-(values / "styles.xml").write_text(
-    """<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
-        <item name="colorPrimary">@color/colorPrimary</item>
-        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
-        <item name="colorAccent">@color/colorAccent</item>
-    </style>
-    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <item name="windowActionBar">false</item>
-        <item name="windowNoTitle">true</item>
-        <item name="android:background">@null</item>
-    </style>
-    <style name="AppTheme.NoActionBarLaunch" parent="AppTheme.NoActionBar">
-        <item name="android:background">@drawable/splash</item>
-        <item name="android:windowBackground">@drawable/splash</item>
-        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
-        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_background</item>
-    </style>
-</resources>
-""",
-    encoding="utf-8",
-)
-
-values31 = RES / "values-v31"
-values31.mkdir(parents=True, exist_ok=True)
-(values31 / "styles.xml").write_text(
-    """<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <style name="AppTheme.NoActionBarLaunch" parent="AppTheme.NoActionBar">
-        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
-        <item name="android:windowSplashScreenIconBackgroundColor">@color/splash_background</item>
-        <item name="android:windowSplashScreenBrandingImage">@null</item>
-    </style>
-</resources>
-""",
-    encoding="utf-8",
-)
-
-print(f"OK splash-only HD ratio={SPLASH_RATIO}")
+# Stage only the generated launcher/splash resources so the existing workflow commits them.
+import subprocess
+subprocess.run([
+    "git", "add",
+    "android/app/src/main/res/mipmap-mdpi",
+    "android/app/src/main/res/mipmap-hdpi",
+    "android/app/src/main/res/mipmap-xhdpi",
+    "android/app/src/main/res/mipmap-xxhdpi",
+    "android/app/src/main/res/mipmap-xxxhdpi",
+    "android/app/src/main/res/drawable",
+    "android/app/src/main/res/drawable-mdpi",
+    "android/app/src/main/res/drawable-hdpi",
+    "android/app/src/main/res/drawable-xhdpi",
+    "android/app/src/main/res/drawable-xxhdpi",
+    "android/app/src/main/res/drawable-xxxhdpi",
+], check=True)
+print(f"OK launcher safe-zone={LAUNCHER_RATIO}, splash safe-zone={SPLASH_RATIO}")

@@ -235,17 +235,9 @@ export default function App() {
   const [showPhotoViewer, setShowPhotoViewer] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerFullImages, setViewerFullImages] = useState<Record<string, string>>({});
-  const [gallerySelectMode, setGallerySelectMode] = useState(false);
-  const [selectedGalleryUris, setSelectedGalleryUris] = useState<string[]>([]);
-  const [confirmGalleryDelete, setConfirmGalleryDelete] = useState<string[] | null>(null);
   const [showEvidenceList, setShowEvidenceList] = useState(false);
   const [showQuickConfig, setShowQuickConfig] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'field' | 'evidence', id?: number, index?: number } | null>(null);
-  const [confirmClearAllStep, setConfirmClearAllStep] = useState<0 | 1 | 2>(0);
-  const [projectSelectMode, setProjectSelectMode] = useState(false);
-  const [selectedProjectIds, setSelectedProjectIds] = useState<number[]>([]);
-  const [confirmDeleteProjectsStep, setConfirmDeleteProjectsStep] = useState<0 | 1 | 2>(0);
-  const [pendingDeleteProjectIds, setPendingDeleteProjectIds] = useState<number[]>([]);
   const [viewingEvidence, setViewingEvidence] = useState<any | null>(null);
   const [editingEvidence, setEditingEvidence] = useState<any | null>(null);
   const [editConfirmOpen, setEditConfirmOpen] = useState(false);
@@ -255,6 +247,7 @@ export default function App() {
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
+  const reversedEvidences = useMemo(() => [...evidences].reverse(), [evidences]);
 
   // Filters for Summary View
   const [filterDate, setFilterDate] = useState<string>("");
@@ -363,20 +356,16 @@ export default function App() {
     setProjects(sortedProjects);
     
     if (sortedProjects.length === 0) {
-      // Primera instalación: solo un proyecto DEMO con 2 registros de ejemplo (sin datos reales del usuario)
-      const demoId = await storageService.createProject({
-        name: "PROYECTO DEMO",
-        client: "CLIENTE EJEMPLO",
+      const id = await storageService.createProject({
+        name: "INSTALACIÓN SECTOR ALPHA",
+        client: "ENEL",
         showDateTime: true,
         dateTimeFormat: "format1",
         showGps: true,
         showLocation: true,
         showTech: true,
-        techName: "TÉCNICO DEMO",
-        customFields: [
-          { name: "Material", value: "Cable FO", showInPhoto: true, active: true },
-          { name: "Cantidad", value: "02 UNID", showInPhoto: true, active: true },
-        ],
+        techName: "L. RUIZ",
+        customFields: [{ name: "Perno 10\"", value: "05 UNID", showInPhoto: true, active: true }],
         locationFormat: 'completa',
         customLocationFormat: { road: true, suburb: true, city: true, state: true },
         allowPdf: true,
@@ -385,44 +374,7 @@ export default function App() {
         fontSizeScale: 'medium',
         overlayColor: '#FFFFFF',
         createdAt: new Date()
-      } as any);
-
-      const now = new Date();
-      const sampleFields1 = [
-        { name: "Material", value: "Cable FO", showInPhoto: true, active: true },
-        { name: "Cantidad", value: "02 UNID", showInPhoto: true, active: true },
-      ];
-      const sampleFields2 = [
-        { name: "Material", value: "Conector SC/APC", showInPhoto: true, active: true },
-        { name: "Cantidad", value: "04 UNID", showInPhoto: true, active: true },
-      ];
-
-      const baseDemo = {
-        projectId: demoId,
-        projectName: "PROYECTO DEMO",
-        latitude: 9.9281,
-        longitude: -84.0907,
-        gpsLabel: "9.92810, -84.09070",
-        locationText: "San José, Costa Rica (ejemplo)",
-        baseFields: { tecnico: "TÉCNICO DEMO" },
-        sharedWhatsApp: false,
-        syncStatus: "pending" as const,
-      };
-
-      await storageService.addEvidence({
-        ...baseDemo,
-        customFields: sampleFields1,
-        createdAt: new Date(now.getTime() - 5 * 60 * 1000),
-        timestamp: now.getTime() - 5 * 60 * 1000,
-      } as any, "");
-
-      await storageService.addEvidence({
-        ...baseDemo,
-        customFields: sampleFields2,
-        createdAt: now,
-        timestamp: now.getTime(),
-      } as any, "");
-
+      });
       loadData();
       return;
     }
@@ -667,9 +619,6 @@ export default function App() {
     setShowGalleryGrid(true);
     setGalleryLoading(true);
     setGalleryThumbs([]);
-    setGallerySelectMode(false);
-    setSelectedGalleryUris([]);
-    setConfirmGalleryDelete(null);
     try {
       const photos = await cameraService.listAlbumPhotos(60);
       const withThumbs: Array<{ uri: string; thumb: string }> = [];
@@ -716,114 +665,6 @@ export default function App() {
     void loadAround();
     return () => { cancelled = true; };
   }, [showPhotoViewer, viewerIndex, galleryThumbs]);
-
-  const toggleGallerySelect = (uri: string) => {
-    setSelectedGalleryUris((prev) =>
-      prev.includes(uri) ? prev.filter((u) => u !== uri) : [...prev, uri]
-    );
-  };
-
-  const clearGallerySelection = () => {
-    setSelectedGalleryUris([]);
-    setGallerySelectMode(false);
-  };
-
-  const toggleProjectSelect = (id: number) => {
-    setSelectedProjectIds((prev) =>
-      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
-    );
-  };
-
-  const clearProjectSelection = () => {
-    setSelectedProjectIds([]);
-    setProjectSelectMode(false);
-  };
-
-  const requestDeleteProjects = (ids: number[]) => {
-    const unique = Array.from(new Set(ids.filter((id) => id != null)));
-    if (!unique.length) return;
-    setPendingDeleteProjectIds(unique);
-    setConfirmDeleteProjectsStep(1);
-  };
-
-  const executeDeleteProjects = async () => {
-    const ids = pendingDeleteProjectIds;
-    if (!ids.length) {
-      setConfirmDeleteProjectsStep(0);
-      return;
-    }
-    try {
-      if ((storageService as any).deleteProjects) {
-        await (storageService as any).deleteProjects(ids);
-      } else {
-        for (const id of ids) {
-          if ((storageService as any).deleteAllEvidencesByProject) {
-            await (storageService as any).deleteAllEvidencesByProject(id);
-          }
-          await (storageService as any).deleteProject?.(id);
-        }
-      }
-      if (selectedProject?.id != null && ids.includes(selectedProject.id)) {
-        setSelectedProject(null);
-        setEvidences([]);
-        setCurrentStep('home');
-      }
-      clearProjectSelection();
-      await loadData();
-    } catch (e) {
-      console.error('[Projects] delete failed', e);
-    } finally {
-      setPendingDeleteProjectIds([]);
-      setConfirmDeleteProjectsStep(0);
-    }
-  };
-
-  const shareSelectedGallery = (uris: string[]) => {
-    if (!uris.length) return;
-    try {
-      const native = (window as any).FieldTraceNative;
-      if (native && typeof native.shareUris === 'function') {
-        native.shareUris(JSON.stringify(uris));
-        return;
-      }
-      console.warn('[Gallery] shareUris not available');
-    } catch (e) {
-      console.warn('[Gallery] share failed', e);
-    }
-  };
-
-  const deleteSelectedGallery = async (uris: string[]) => {
-    if (!uris.length) return;
-    try {
-      const native = (window as any).FieldTraceNative;
-      let deleted = 0;
-      if (native && typeof native.deleteUris === 'function') {
-        deleted = Number(native.deleteUris(JSON.stringify(uris)) || 0);
-      }
-      const uriSet = new Set(uris);
-      setGalleryThumbs((prev) => prev.filter((p) => !uriSet.has(p.uri)));
-      setSelectedGalleryUris([]);
-      setGallerySelectMode(false);
-      setConfirmGalleryDelete(null);
-      // Ajustar visor si estaba abierto
-      if (showPhotoViewer) {
-        const remaining = galleryThumbs.filter((p) => !uriSet.has(p.uri));
-        if (!remaining.length) {
-          setShowPhotoViewer(false);
-        } else {
-          setViewerIndex((i) => Math.min(i, remaining.length - 1));
-        }
-      }
-      // Actualizar miniatura de cámara
-      try {
-        const thumb = await cameraService.getLastThumbnail(256);
-        setLastImage(thumb);
-      } catch {}
-      console.log('[Gallery] deleted', deleted, 'of', uris.length);
-    } catch (e) {
-      console.warn('[Gallery] delete failed', e);
-    }
-  };
 
   const shareNative = async () => {
     if (!lastImage || !selectedProject) return;
@@ -897,64 +738,10 @@ export default function App() {
                 </div>
 
                 <div className="space-y-5">
-                  <div className="flex justify-between items-center gap-2">
+                  <div className="flex justify-between items-center">
                     <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest">Proyectos Recientes</span>
-                    <div className="flex items-center gap-1">
-                      {!projectSelectMode ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => { setProjectSelectMode(true); setSelectedProjectIds([]); }}
-                            className="text-gray-500 font-bold text-[10px] uppercase tracking-tighter hover:bg-gray-50 px-2 py-1 rounded-lg"
-                          >
-                            Seleccionar
-                          </button>
-                          <button onClick={handleCreateProject} className="text-blue-600 font-bold text-xs uppercase tracking-tighter hover:bg-blue-50 px-3 py-1 rounded-lg">+ Nuevo Proyecto</button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const visible = projects.filter(p => {
-                                const term = searchTerm.toLowerCase();
-                                return (
-                                  p.name.toLowerCase().includes(term) ||
-                                  p.client.toLowerCase().includes(term) ||
-                                  p.techName.toLowerCase().includes(term)
-                                );
-                              });
-                              const ids = visible.map(p => p.id!).filter(Boolean) as number[];
-                              if (selectedProjectIds.length === ids.length) setSelectedProjectIds([]);
-                              else setSelectedProjectIds(ids);
-                            }}
-                            className="text-blue-600 font-bold text-[10px] uppercase tracking-tighter hover:bg-blue-50 px-2 py-1 rounded-lg"
-                          >
-                            {selectedProjectIds.length ? 'Ninguno' : 'Todos'}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={clearProjectSelection}
-                            className="text-gray-500 font-bold text-[10px] uppercase tracking-tighter hover:bg-gray-50 px-2 py-1 rounded-lg"
-                          >
-                            Cancelar
-                          </button>
-                        </>
-                      )}
-                    </div>
+                    <button onClick={handleCreateProject} className="text-blue-600 font-bold text-xs uppercase tracking-tighter hover:bg-blue-50 px-3 py-1 rounded-lg">+ Nuevo Proyecto</button>
                   </div>
-                  {projectSelectMode && selectedProjectIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => requestDeleteProjects(selectedProjectIds)}
-                      className="w-full py-3 bg-red-50 border border-red-200 rounded-2xl flex items-center justify-center gap-2 active:scale-95"
-                    >
-                      <Trash2 className="w-4 h-4 text-red-600" />
-                      <span className="text-[10px] font-black text-red-600 uppercase tracking-widest">
-                        Eliminar ({selectedProjectIds.length})
-                      </span>
-                    </button>
-                  )}
                   {projects
                     .filter(p => {
                       const term = searchTerm.toLowerCase();
@@ -964,55 +751,25 @@ export default function App() {
                         p.techName.toLowerCase().includes(term)
                       );
                     })
-                    .map((p) => {
-                    const isSelected = p.id != null && selectedProjectIds.includes(p.id);
-                    return (
+                    .map((p) => (
                     <motion.div 
                       whileTap={{ scale: 0.98 }}
                       key={p.id} 
-                      onClick={() => {
-                        if (projectSelectMode) {
-                          if (p.id != null) toggleProjectSelect(p.id);
-                        } else {
-                          handleSelectProject(p);
-                        }
-                      }}
-                      className={`p-5 bg-white border rounded-[2rem] flex justify-between items-center hover:shadow-xl hover:shadow-blue-600/5 transition-all cursor-pointer group shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] ${isSelected ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-100'}`}
+                      onClick={() => handleSelectProject(p)}
+                      className="p-5 bg-white border border-gray-100 rounded-[2rem] flex justify-between items-center hover:shadow-xl hover:shadow-blue-600/5 transition-all cursor-pointer group shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)]"
                     >
-                      <div className="flex gap-4 items-center min-w-0">
-                        {projectSelectMode ? (
-                          <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0 ${isSelected ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-300 bg-white'}`}>
-                            {isSelected && <CheckCircle2 className="w-4 h-4" />}
-                          </div>
-                        ) : (
-                          <div className="w-14 h-14 bg-[#F8FAFC] rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-50 transition-colors shrink-0">
-                            <MapPin className="w-6 h-6 text-gray-400 group-hover:text-blue-600"/>
-                          </div>
-                        )}
-                        <div className="min-w-0">
-                          <p className="text-[14px] font-black text-gray-950 uppercase tracking-tight truncate">{p.name}</p>
-                          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest truncate">{p.client}</p>
+                      <div className="flex gap-5 items-center">
+                        <div className="w-14 h-14 bg-[#F8FAFC] rounded-[1.5rem] flex items-center justify-center group-hover:bg-blue-50 transition-colors">
+                          <MapPin className="w-6 h-6 text-gray-400 group-hover:text-blue-600"/>
+                        </div>
+                        <div>
+                          <p className="text-[14px] font-black text-gray-950 uppercase tracking-tight">{p.name}</p>
+                          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{p.client}</p>
                         </div>
                       </div>
-                      {!projectSelectMode && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (p.id != null) requestDeleteProjects([p.id]);
-                            }}
-                            className="w-10 h-10 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-red-500 active:scale-95"
-                            title="Eliminar proyecto"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                          <ChevronRight className="w-6 h-6 text-gray-200 group-hover:text-blue-600"/>
-                        </div>
-                      )}
+                      <ChevronRight className="w-6 h-6 text-gray-200 group-hover:text-blue-600"/>
                     </motion.div>
-                    );
-                  })}
+                  ))}
                 </div>
               </motion.div>
             )}
@@ -1066,17 +823,6 @@ export default function App() {
                    </button>
                 </div>
 
-                {evidences.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmClearAllStep(1)}
-                    className="w-full py-3.5 bg-red-50 border border-red-200 rounded-[1.5rem] flex items-center justify-center gap-2 active:scale-95 transition-all shadow-sm"
-                  >
-                    <Trash2 className="w-4 h-4 text-red-600" />
-                    <span className="text-[10px] font-black text-red-600 uppercase tracking-widest">Vaciar registros</span>
-                  </button>
-                )}
-
                 <div className="space-y-2 pb-24">
                   {evidences.length === 0 ? (
                     <div className="py-16 text-center space-y-3">
@@ -1084,7 +830,7 @@ export default function App() {
                        <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest leading-relaxed">No hay registros<br/>tecnicos capturados</p>
                     </div>
                   ) : (
-                    evidences.map((ev) => {
+                    reversedEvidences.map((ev) => {
                       const tech = ev.baseFields?.tecnico || '-';
                       const gpsShort = ev.gpsLabel || (ev.latitude ? `${Number(ev.latitude).toFixed(5)}, ${Number(ev.longitude).toFixed(5)}` : 'SIN GPS');
                       const mainField = (ev.customFields || []).find((f: any) => f.active !== false && f.showInPhoto && (f.value || f.name));
@@ -1862,7 +1608,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-            <AnimatePresence>
+      <AnimatePresence>
         {showGalleryGrid && (
           <motion.div
             initial={{ opacity: 0 }}
@@ -1870,65 +1616,25 @@ export default function App() {
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[100] bg-black flex flex-col"
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0 gap-2">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowGalleryGrid(false)}
+                className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <h2 className="text-sm font-black uppercase tracking-tight text-white">Field Trace</h2>
               <button
                 type="button"
                 onClick={() => {
-                  if (gallerySelectMode) {
-                    clearGallerySelection();
-                  } else {
-                    setShowGalleryGrid(false);
-                  }
+                  setShowGalleryGrid(false);
+                  void cameraService.openFieldTraceAlbum(true);
                 }}
-                className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white shrink-0"
+                className="text-[10px] font-black uppercase text-blue-400 px-2 py-2"
               >
-                {gallerySelectMode ? <X className="w-5 h-5" /> : <ArrowLeft className="w-5 h-5" />}
+                Galeria
               </button>
-              <h2 className="text-sm font-black uppercase tracking-tight text-white truncate">
-                {gallerySelectMode
-                  ? (selectedGalleryUris.length ? `${selectedGalleryUris.length} seleccionada(s)` : 'Seleccionar')
-                  : 'Field Trace'}
-              </h2>
-              <div className="flex items-center gap-1 shrink-0">
-                {!gallerySelectMode ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGallerySelectMode(true);
-                        setSelectedGalleryUris([]);
-                      }}
-                      className="text-[10px] font-black uppercase text-white/80 px-2 py-2"
-                    >
-                      Seleccionar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowGalleryGrid(false);
-                        void cameraService.openFieldTraceAlbum(true);
-                      }}
-                      className="text-[10px] font-black uppercase text-blue-400 px-2 py-2"
-                    >
-                      Galeria
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (selectedGalleryUris.length === galleryThumbs.length) {
-                        setSelectedGalleryUris([]);
-                      } else {
-                        setSelectedGalleryUris(galleryThumbs.map((p) => p.uri));
-                      }
-                    }}
-                    className="text-[10px] font-black uppercase text-blue-400 px-2 py-2"
-                  >
-                    {selectedGalleryUris.length === galleryThumbs.length ? 'Ninguna' : 'Todas'}
-                  </button>
-                )}
-              </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {galleryLoading && (
@@ -1942,73 +1648,23 @@ export default function App() {
               )}
               {!galleryLoading && galleryThumbs.length > 0 && (
                 <div className="grid grid-cols-3 gap-1.5">
-                  {galleryThumbs.map((item, idx) => {
-                    const selected = selectedGalleryUris.includes(item.uri);
-                    return (
-                      <button
-                        key={item.uri}
-                        type="button"
-                        className={`relative aspect-square rounded-lg overflow-hidden bg-white/5 active:opacity-80 ${selected ? 'ring-2 ring-blue-500' : ''}`}
-                        onClick={() => {
-                          if (gallerySelectMode) {
-                            toggleGallerySelect(item.uri);
-                          } else {
-                            openPhotoViewer(idx);
-                          }
-                        }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          if (!gallerySelectMode) setGallerySelectMode(true);
-                          toggleGallerySelect(item.uri);
-                        }}
-                      >
-                        <img src={item.thumb} alt="" className="w-full h-full object-cover" />
-                        {gallerySelectMode && (
-                          <span
-                            className={`absolute top-1.5 right-1.5 w-6 h-6 rounded-full border-2 flex items-center justify-center ${
-                              selected
-                                ? 'bg-blue-500 border-blue-400 text-white'
-                                : 'bg-black/40 border-white/50'
-                            }`}
-                          >
-                            {selected && <CheckCircle2 className="w-4 h-4" />}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
+                  {galleryThumbs.map((item, idx) => (
+                    <button
+                      key={item.uri}
+                      type="button"
+                      className="aspect-square rounded-lg overflow-hidden bg-white/5 active:opacity-80"
+                      onClick={() => openPhotoViewer(idx)}
+                    >
+                      <img src={item.thumb} alt="" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
-            {gallerySelectMode && selectedGalleryUris.length > 0 && (
-              <div className="shrink-0 border-t border-white/10 px-4 py-3 flex items-center justify-center gap-4 bg-black/90">
-                <button
-                  type="button"
-                  onClick={() => shareSelectedGallery(selectedGalleryUris)}
-                  className="flex-1 max-w-[160px] flex items-center justify-center gap-2 py-3 rounded-2xl bg-blue-600 text-white text-[11px] font-black uppercase tracking-wider active:scale-95"
-                >
-                  <Share2 className="w-4 h-4" />
-                  Compartir
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmGalleryDelete([...selectedGalleryUris])}
-                  className="flex-1 max-w-[160px] flex items-center justify-center gap-2 py-3 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider active:scale-95"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Eliminar
-                </button>
-              </div>
-            )}
-            {!gallerySelectMode && (
-              <p className="text-center text-[9px] text-white/30 py-2 shrink-0">
-                Toca una foto para abrir · mantén pulsado o &quot;Seleccionar&quot; para elegir varias
-              </p>
-            )}
+            <p className="text-center text-[9px] text-white/30 py-2 shrink-0">Toca una foto para abrir · desliza para ver otras</p>
           </motion.div>
         )}
       </AnimatePresence>
-
 
       <AnimatePresence>
         {showPhotoViewer && galleryThumbs.length > 0 && (
@@ -2087,80 +1743,9 @@ export default function App() {
               )}
             </div>
 
-            <div className="shrink-0 border-t border-white/10 px-4 py-3 flex flex-col gap-2 bg-black/90">
-              <div className="flex items-center justify-center gap-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const uri = galleryThumbs[viewerIndex]?.uri;
-                    if (uri) shareSelectedGallery([uri]);
-                  }}
-                  className="flex-1 max-w-[160px] flex items-center justify-center gap-2 py-3 rounded-2xl bg-blue-600 text-white text-[11px] font-black uppercase tracking-wider active:scale-95"
-                >
-                  <Share2 className="w-4 h-4" />
-                  Compartir
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const uri = galleryThumbs[viewerIndex]?.uri;
-                    if (uri) setConfirmGalleryDelete([uri]);
-                  }}
-                  className="flex-1 max-w-[160px] flex items-center justify-center gap-2 py-3 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider active:scale-95"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Eliminar
-                </button>
-              </div>
-              <p className="text-center text-[9px] text-white/35">
-                Desliza izquierda / derecha para ver otras fotos
-              </p>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {confirmGalleryDelete && confirmGalleryDelete.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[140] bg-black/80 flex items-center justify-center p-6"
-          >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-gray-900 border border-white/10 rounded-3xl p-6 w-full max-w-sm space-y-4"
-            >
-              <h3 className="text-base font-black uppercase tracking-tight text-white">
-                Eliminar {confirmGalleryDelete.length === 1 ? 'foto' : `${confirmGalleryDelete.length} fotos`}
-              </h3>
-              <p className="text-sm text-white/60">
-                {confirmGalleryDelete.length === 1
-                  ? 'Esta foto se eliminará del álbum Field Trace. ¿Continuar?'
-                  : `Se eliminarán ${confirmGalleryDelete.length} fotos del álbum Field Trace. ¿Continuar?`}
-              </p>
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirmGalleryDelete(null)}
-                  className="flex-1 py-3 rounded-2xl bg-white/10 text-white text-[11px] font-black uppercase tracking-wider"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void deleteSelectedGallery(confirmGalleryDelete);
-                  }}
-                  className="flex-1 py-3 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider"
-                >
-                  Eliminar
-                </button>
-              </div>
-            </motion.div>
+            <p className="text-center text-[9px] text-white/35 py-3 shrink-0">
+              Desliza izquierda / derecha para ver otras fotos
+            </p>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2327,8 +1912,6 @@ export default function App() {
                       } catch (e) {
                         console.error('Error eliminando evidencia', e);
                       }
-                    } else if (confirmDelete.type === 'project' && confirmDelete.id != null) {
-                      requestDeleteProjects([confirmDelete.id]);
                     }
                     setConfirmDelete(null);
                   }}
@@ -2368,96 +1951,6 @@ export default function App() {
             </div>
           </motion.div>
         )}
-
-
-        {confirmDeleteProjectsStep === 1 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
-              <h3 className="text-base font-black uppercase tracking-tight text-gray-950">
-                {pendingDeleteProjectIds.length === 1 ? '¿Eliminar proyecto?' : `¿Eliminar ${pendingDeleteProjectIds.length} proyectos?`}
-              </h3>
-              <p className="text-sm text-gray-600">
-                Se borrarán el proyecto y todos sus registros. Las fotos del álbum Field Trace no se eliminan automáticamente.
-              </p>
-              <div className="flex gap-3 pt-1">
-                <button type="button" onClick={() => { setConfirmDeleteProjectsStep(0); setPendingDeleteProjectIds([]); }} className="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-700 text-[11px] font-black uppercase tracking-wider">Cancelar</button>
-                <button type="button" onClick={() => setConfirmDeleteProjectsStep(2)} className="flex-1 py-3.5 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider">Continuar</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {confirmDeleteProjectsStep === 2 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[201] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl border-2 border-red-200">
-              <h3 className="text-base font-black uppercase tracking-tight text-red-700">Confirmación final</h3>
-              <p className="text-sm text-gray-600">
-                Esta acción <span className="font-bold text-red-600">no se puede deshacer</span>.
-                {pendingDeleteProjectIds.length === 1
-                  ? ' ¿Eliminar definitivamente este proyecto?'
-                  : ` ¿Eliminar definitivamente ${pendingDeleteProjectIds.length} proyectos?`}
-              </p>
-              <div className="flex gap-3 pt-1">
-                <button type="button" onClick={() => { setConfirmDeleteProjectsStep(0); setPendingDeleteProjectIds([]); }} className="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-700 text-[11px] font-black uppercase tracking-wider">Cancelar</button>
-                <button type="button" onClick={() => { void executeDeleteProjects(); }} className="flex-1 py-3.5 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider">Sí, eliminar</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {confirmClearAllStep === 1 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
-              <h3 className="text-base font-black uppercase tracking-tight text-gray-950">¿Vaciar todos los registros?</h3>
-              <p className="text-sm text-gray-600">
-                Se eliminarán <span className="font-bold text-gray-900">{evidences.length}</span> registro(s) de este proyecto. Las fotos del álbum Field Trace no se borran automáticamente.
-              </p>
-              <div className="flex gap-3 pt-1">
-                <button type="button" onClick={() => setConfirmClearAllStep(0)} className="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-700 text-[11px] font-black uppercase tracking-wider">Cancelar</button>
-                <button type="button" onClick={() => setConfirmClearAllStep(2)} className="flex-1 py-3.5 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider">Continuar</button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-
-        {confirmClearAllStep === 2 && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[201] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
-            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl border-2 border-red-200">
-              <h3 className="text-base font-black uppercase tracking-tight text-red-700">Confirmación final</h3>
-              <p className="text-sm text-gray-600">
-                Esta acción <span className="font-bold text-red-600">no se puede deshacer</span>. ¿Eliminar definitivamente todos los registros del proyecto?
-              </p>
-              <div className="flex gap-3 pt-1">
-                <button type="button" onClick={() => setConfirmClearAllStep(0)} className="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-700 text-[11px] font-black uppercase tracking-wider">Cancelar</button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      if (selectedProject?.id != null) {
-                        if ((storageService as any).deleteAllEvidencesByProject) {
-                          await (storageService as any).deleteAllEvidencesByProject(selectedProject.id);
-                        } else {
-                          for (const ev of evidences) {
-                            if (ev.id != null) await storageService.deleteEvidence(ev.id);
-                          }
-                        }
-                        setEvidences([]);
-                      }
-                    } catch (e) {
-                      console.error('[ClearAll] failed', e);
-                    } finally {
-                      setConfirmClearAllStep(0);
-                    }
-                  }}
-                  className="flex-1 py-3.5 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider"
-                >
-                  Sí, eliminar todo
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-
         {editingEvidence && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[190] bg-black/70 backdrop-blur-sm flex flex-col">
             <div className="flex items-center justify-between px-4 py-4 bg-white border-b">
@@ -2470,35 +1963,8 @@ export default function App() {
                 <input type="text" value={editingEvidence.baseFields?.tecnico || ''} onChange={(e) => setEditingEvidence({ ...editingEvidence, baseFields: { ...(editingEvidence.baseFields || {}), tecnico: e.target.value.toUpperCase() } })} className="w-full p-3.5 bg-white border border-gray-100 rounded-2xl text-sm font-bold outline-none" />
               </div>
               {(editingEvidence.customFields || []).map((f: any, idx: number) => (
-                <div key={idx} className="space-y-3 bg-white border border-gray-100 rounded-2xl p-3.5">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Descripción</label>
-                    <input
-                      type="text"
-                      value={f.name || ''}
-                      onChange={(e) => {
-                        const fields = [...(editingEvidence.customFields || [])];
-                        fields[idx] = { ...fields[idx], name: e.target.value };
-                        setEditingEvidence({ ...editingEvidence, customFields: fields });
-                      }}
-                      className="w-full p-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-400"
-                      placeholder="Nombre del campo"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Cantidad / Valor</label>
-                    <input
-                      type="text"
-                      value={f.value || ''}
-                      onChange={(e) => {
-                        const fields = [...(editingEvidence.customFields || [])];
-                        fields[idx] = { ...fields[idx], value: e.target.value };
-                        setEditingEvidence({ ...editingEvidence, customFields: fields });
-                      }}
-                      className="w-full p-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-400"
-                      placeholder="Valor"
-                    />
-                  </div>
+                <div key={idx} className="space-y-1.5"><label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{f.name || `Campo ${idx + 1}`}</label>
+                  <input type="text" value={f.value || ''} onChange={(e) => { const fields = [...(editingEvidence.customFields || [])]; fields[idx] = { ...fields[idx], value: e.target.value }; setEditingEvidence({ ...editingEvidence, customFields: fields }); }} className="w-full p-3.5 bg-white border border-gray-100 rounded-2xl text-sm font-bold outline-none" />
                 </div>
               ))}
               <button type="button" onClick={() => { setPendingEditSave(editingEvidence); setEditConfirmOpen(true); }} className="w-full py-4 bg-blue-600 text-white rounded-2xl text-sm font-black uppercase">Guardar cambios</button>

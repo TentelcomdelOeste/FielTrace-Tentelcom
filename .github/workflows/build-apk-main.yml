@@ -74,13 +74,11 @@ jobs:
       - name: Restore committed native files after sync (MainActivity + AndroidManifest)
         run: |
           set -euo pipefail
-          # MainActivity (native bridge)
           test -f android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           grep -q 'getDefaultVideoPoster' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           echo "NATIVE MAINACTIVITY RESTORED"
-          # AndroidManifest MUST keep location permissions (cap sync can drop/overwrite them)
           git checkout -- android/app/src/main/AndroidManifest.xml
           echo "=== AndroidManifest after restore ==="
           cat android/app/src/main/AndroidManifest.xml
@@ -96,7 +94,7 @@ jobs:
       - name: Validate APK location permissions (aapt)
         run: |
           set -euo pipefail
-          APK="android/app/build/outputs/apk/debug/FieldTrace-debug.apk"
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
           test -s "$APK"
           AAPT=$(ls "${ANDROID_HOME}/build-tools"/*/aapt 2>/dev/null | sort -V | tail -1)
           if [ -z "$AAPT" ]; then
@@ -107,7 +105,6 @@ jobs:
           "$AAPT" dump permissions "$APK" || true
           echo "=== aapt dump badging (uses-permission lines) ==="
           "$AAPT" dump badging "$APK" | grep -i permission || true
-          # Strict check
           PERMS=$("$AAPT" dump permissions "$APK" 2>/dev/null || true)
           echo "$PERMS" | grep -q "ACCESS_FINE_LOCATION" || {
             echo "FAIL: ACCESS_FINE_LOCATION missing from final APK (aapt)"
@@ -125,11 +122,11 @@ jobs:
           ls -lh "$APK"
       - name: Final APK audit
         run: |
-          test -s android/app/build/outputs/apk/debug/FieldTrace-debug.apk
+          test -s android/app/build/outputs/apk/debug/FieldTrace.apk
           echo "APK BUILD AND FINAL AUDIT PASSED"
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: FielTrace-native-camera-debug-apk
-          path: android/app/build/outputs/apk/debug/FieldTrace-debug.apk
+          path: android/app/build/outputs/apk/debug/FieldTrace.apk
           if-no-files-found: error

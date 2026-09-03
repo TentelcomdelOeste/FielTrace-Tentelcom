@@ -86,5 +86,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: FielTrace-history-edit-clear-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: android/app/build/outputs/apk/debug/FieldTrace-debug.apk
           if-no-files-found: error

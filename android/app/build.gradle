@@ -22,6 +22,13 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+
+    // Nombre del APK descargable: FieldTrace-debug.apk / FieldTrace-release.apk
+    applicationVariants.all { variant ->
+        variant.outputs.all { output ->
+            outputFileName = "FieldTrace-${variant.buildType.name}.apk"
+        }
+    }
 }
 
 repositories {

@@ -1,0 +1,56 @@
+name: Generate Android icons + splash (no APK)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/generate-android-icons.yml'
+      - 'scripts/generate_android_icons.py'
+      - 'public/pwa-512x512.png'
+      - 'public/pwa-192x192.png'
+      - 'public/pwa-180x180.png'
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pillow
+        run: pip install -q Pillow
+
+      - name: Generate mipmaps + splash resources
+        run: |
+          set -euo pipefail
+          test -f public/pwa-512x512.png
+          python3 scripts/generate_android_icons.py
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          test -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml
+          test -f android/app/src/main/res/drawable/splash.xml
+          test -f android/app/src/main/res/values/styles.xml
+          test -f android/app/src/main/res/xml/file_paths.xml
+          grep -q 'AppTheme.NoActionBarLaunch' android/app/src/main/res/values/styles.xml
+          grep -q 'splash_background' android/app/src/main/res/values/colors.xml
+          grep -q '@mipmap/ic_launcher' android/app/src/main/AndroidManifest.xml
+          echo "ICON/SPLASH RESOURCES OK"
+          find android/app/src/main/res -type f | sort
+
+      - name: Commit resources
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/res scripts/generate_android_icons.py
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "assets(android): iconos launcher + splash FieldTrace (fondo blanco)"
+            git push
+          fi

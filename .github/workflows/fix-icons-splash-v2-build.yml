@@ -1,0 +1,106 @@
+name: Fix icons v2 + Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/fix-icons-splash-v2-build.yml'
+      - 'scripts/fix_icons_splash_v2.py'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Pillow
+        run: pip install -q Pillow
+
+      - name: Apply icon/splash v2
+        run: |
+          set -euo pipefail
+          python3 scripts/fix_icons_splash_v2.py
+          test -f android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_foreground.png
+          test -f android/app/src/main/res/drawable/splash_icon.png
+          test ! -f android/app/src/main/res/drawable/splash.png
+          echo "ICONS V2 OK"
+
+      - name: Commit resources only
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android/app/src/main/res scripts/fix_icons_splash_v2.py public/android-chrome-512x512.png || true
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "fix: launcher mas alejado + splash HD 512"
+            git push
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Cap sync
+        run: |
+          if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Re-apply icons after sync (no App.tsx changes)
+        run: |
+          set -euo pipefail
+          git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java || true
+          git checkout -- android/app/src/main/AndroidManifest.xml || true
+          python3 scripts/fix_icons_splash_v2.py
+          rm -f android/app/src/main/res/drawable/splash.png
+          rm -f android/app/src/main/res/drawable-*/splash.png
+          echo "RESTORED"
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK to FieldTrace.apk
+        run: |
+          set -euo pipefail
+          OUT="android/app/build/outputs/apk/debug"
+          if [ ! -f "$OUT/FieldTrace.apk" ]; then
+            SRC=$(ls -1t "$OUT"/*.apk 2>/dev/null | head -1 || true)
+            test -n "$SRC"
+            mv "$SRC" "$OUT/FieldTrace.apk"
+          fi
+          test -s "$OUT/FieldTrace.apk"
+          ls -lh "$OUT/FieldTrace.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FieldTrace-apk
+          path: android/app/build/outputs/apk/debug/FieldTrace.apk
+          if-no-files-found: error

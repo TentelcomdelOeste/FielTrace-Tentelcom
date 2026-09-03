@@ -228,6 +228,9 @@ export default function App() {
   const [unlockedSettings, setUnlockedSettings] = useState<Record<string, boolean>>({});
   const [lastImage, setLastImage] = useState<string | null>(null);
   const [showLastImage, setShowLastImage] = useState(false);
+  const [showGalleryGrid, setShowGalleryGrid] = useState(false);
+  const [galleryThumbs, setGalleryThumbs] = useState<Array<{ uri: string; thumb: string }>>([]);
+  const [galleryLoading, setGalleryLoading] = useState(false);
   const [showEvidenceList, setShowEvidenceList] = useState(false);
   const [showQuickConfig, setShowQuickConfig] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'field' | 'evidence', id?: number, index?: number } | null>(null);
@@ -311,6 +314,21 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('native-camera-active', currentStep === 'camera');
     return () => document.documentElement.classList.remove('native-camera-active');
+  }, [currentStep]);
+
+  // Load last Field Trace album thumbnail when entering camera (survives app restart)
+  useEffect(() => {
+    if (currentStep !== 'camera') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const thumb = await cameraService.getLastThumbnail(256);
+        if (!cancelled && thumb) setLastImage(thumb);
+      } catch (e) {
+        console.warn('[Gallery] load last thumb:', e);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [currentStep]);
 
   useEffect(() => {
@@ -590,6 +608,25 @@ export default function App() {
       if (flashMode === 'on') {
         void ensureFlashArmed('on');
       }
+    }
+  };
+
+  const openGalleryGrid = async () => {
+    setShowGalleryGrid(true);
+    setGalleryLoading(true);
+    setGalleryThumbs([]);
+    try {
+      const photos = await cameraService.listAlbumPhotos(60);
+      const withThumbs: Array<{ uri: string; thumb: string }> = [];
+      for (const ph of photos) {
+        const t = await cameraService.getPhotoThumbnail(ph.uri, 200);
+        if (t) withThumbs.push({ uri: ph.uri, thumb: t });
+      }
+      setGalleryThumbs(withThumbs);
+    } catch (e) {
+      console.warn('[Gallery] grid load failed', e);
+    } finally {
+      setGalleryLoading(false);
     }
   };
 
@@ -1465,8 +1502,21 @@ export default function App() {
             <button 
               type="button"
               onClick={() => {
-                void cameraService.openFieldTraceAlbum(true);
-              }} 
+                void (async () => {
+                  const photos = await cameraService.listAlbumPhotos(1);
+                  if (photos.length > 0) {
+                    await openGalleryGrid();
+                  } else if (lastImage) {
+                    setShowLastImage(true);
+                  } else {
+                    void cameraService.openFieldTraceAlbum(true);
+                  }
+                })();
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                void openGalleryGrid();
+              }}
               className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95"
             >
               {lastImage ? (
@@ -1518,6 +1568,71 @@ export default function App() {
                  </button>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showGalleryGrid && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black flex flex-col"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowGalleryGrid(false)}
+                className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center text-white"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <h2 className="text-sm font-black uppercase tracking-tight text-white">Field Trace</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowGalleryGrid(false);
+                  void cameraService.openFieldTraceAlbum(true);
+                }}
+                className="text-[10px] font-black uppercase text-blue-400 px-2 py-2"
+              >
+                Galeria
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2">
+              {galleryLoading && (
+                <p className="text-center text-white/50 text-xs font-bold uppercase py-16 tracking-widest">Cargando fotos...</p>
+              )}
+              {!galleryLoading && galleryThumbs.length === 0 && (
+                <div className="py-16 text-center space-y-3">
+                  <History className="w-12 h-12 text-white/20 mx-auto" />
+                  <p className="text-[11px] text-white/40 font-black uppercase tracking-widest">Sin fotos en el album<br/>Field Trace</p>
+                </div>
+              )}
+              {!galleryLoading && galleryThumbs.length > 0 && (
+                <div className="grid grid-cols-3 gap-1.5">
+                  {galleryThumbs.map((item) => (
+                    <button
+                      key={item.uri}
+                      type="button"
+                      className="aspect-square rounded-lg overflow-hidden bg-white/5 active:opacity-80"
+                      onClick={() => {
+                        const native = (window as any).FieldTraceNative;
+                        if (native?.openUri) {
+                          native.openUri(item.uri);
+                        } else {
+                          void cameraService.openFieldTraceAlbum(true);
+                        }
+                      }}
+                    >
+                      <img src={item.thumb} alt="" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p className="text-center text-[9px] text-white/30 py-2 shrink-0">Toca una foto para abrir · desliza en el visor del sistema</p>
           </motion.div>
         )}
       </AnimatePresence>

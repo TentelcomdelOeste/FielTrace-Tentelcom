@@ -1,0 +1,114 @@
+name: Restore gallery select + splash + Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/restore-gallery-select-build.yml'
+      - 'scripts/restore_gallery_select_splash.py'
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Pillow
+        run: pip install -q Pillow
+
+      - name: Restore gallery select + fix splash
+        run: |
+          set -euo pipefail
+          python3 scripts/restore_gallery_select_splash.py
+          grep -q 'const toggleGallerySelect' src/App.tsx
+          grep -q 'const shareSelectedGallery' src/App.tsx
+          grep -q 'const executeDeleteGallery' src/App.tsx
+          grep -q 'confirmDeleteGalleryStep === 1' src/App.tsx
+          grep -q 'gallerySelectMode' src/App.tsx
+          test -f android/app/src/main/res/drawable/splash.xml
+          test ! -f android/app/src/main/res/drawable/splash.png
+          echo "FIX OK"
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx android/app/src/main/res scripts/restore_gallery_select_splash.py
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "fix: restaurar seleccionar/compartir/eliminar en galeria + splash mas pequeño"
+            git push
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Cap sync
+        run: |
+          if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Restore native + re-apply gallery/icons after sync
+        run: |
+          set -euo pipefail
+          git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          git checkout -- android/app/src/main/AndroidManifest.xml || true
+          python3 scripts/restore_gallery_select_splash.py
+          rm -f android/app/src/main/res/drawable/splash.png
+          rm -f android/app/src/main/res/drawable-*/splash.png
+          grep -q 'const toggleGallerySelect' src/App.tsx
+          grep -q 'shareUris' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'deleteUris' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          echo "RESTORED"
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK to FieldTrace.apk
+        run: |
+          set -euo pipefail
+          OUT="android/app/build/outputs/apk/debug"
+          ls -la "$OUT" || true
+          if [ ! -f "$OUT/FieldTrace.apk" ]; then
+            SRC=$(ls -1t "$OUT"/*.apk 2>/dev/null | head -1 || true)
+            test -n "$SRC"
+            mv "$SRC" "$OUT/FieldTrace.apk"
+          fi
+          test -s "$OUT/FieldTrace.apk"
+          ls -lh "$OUT/FieldTrace.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FieldTrace-apk
+          path: android/app/build/outputs/apk/debug/FieldTrace.apk
+          if-no-files-found: error

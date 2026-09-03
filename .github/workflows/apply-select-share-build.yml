@@ -1,0 +1,113 @@
+name: Apply gallery select/share + Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/apply-select-share-build.yml'
+      - 'scripts/apply_gallery_select_share.py'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure App.tsx is healthy
+        run: |
+          set -euo pipefail
+          lines=$(wc -l < src/App.tsx || echo 0)
+          if [ "$lines" -lt 1000 ] || ! grep -q 'showPhotoViewer' src/App.tsx; then
+            echo "App.tsx broken or missing swipe; restoring baseline with swipe"
+            GOOD_SHA="517d64e58149791a7f81dfa23b0e7583143b432d"
+            git show "$GOOD_SHA:src/App.tsx" > src/App.tsx
+            if [ -f scripts/apply_swipe_viewer.py ]; then
+              python3 scripts/apply_swipe_viewer.py || true
+            fi
+          fi
+          grep -q 'showPhotoViewer' src/App.tsx
+          echo "App.tsx OK lines=$(wc -l < src/App.tsx)"
+
+      - name: Apply select / share / delete
+        run: |
+          set -euo pipefail
+          python3 scripts/apply_gallery_select_share.py
+          grep -q 'gallerySelectMode' src/App.tsx
+          grep -q 'shareSelectedGallery' src/App.tsx
+          grep -q 'deleteSelectedGallery' src/App.tsx
+          grep -q 'confirmGalleryDelete' src/App.tsx
+          echo "SELECT SHARE DELETE OK"
+
+      - name: Commit App.tsx
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx scripts/apply_gallery_select_share.py
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "feat(gallery): multi-select, compartir y eliminar con confirmación"
+            git push
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Ensure Capacitor Android platform
+        run: |
+          if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            rm -rf android
+            npx cap add android
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Restore committed native files after sync
+        run: |
+          set -euo pipefail
+          git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'deleteUris' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'shareUris' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          git checkout -- android/app/src/main/AndroidManifest.xml
+          echo "NATIVE OK"
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FielTrace-select-share-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

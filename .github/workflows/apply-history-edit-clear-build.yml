@@ -1,0 +1,90 @@
+name: History order + edit fields + clear all + Build APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/apply-history-edit-clear-build.yml'
+      - 'scripts/apply_history_edit_clear.py'
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply history/edit/clear patches
+        run: |
+          set -euo pipefail
+          python3 scripts/apply_history_edit_clear.py
+          grep -q 'confirmClearAllStep' src/App.tsx
+          grep -q 'Vaciar registros' src/App.tsx
+          grep -q 'Descripción' src/App.tsx
+          grep -q 'deleteAllEvidencesByProject' src/services/storageService.ts
+          grep -q 'evidences.map((ev)' src/App.tsx
+          ! grep -q 'reversedEvidences.map' src/App.tsx
+          echo "PATCH OK"
+
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/App.tsx src/services/storageService.ts scripts/apply_history_edit_clear.py
+          if git diff --staged --quiet; then
+            echo "No changes"
+          else
+            git commit -m "feat: registros más recientes primero, editar descripción, vaciar con doble confirmación"
+            git push
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Build web app
+        run: npm run build
+
+      - name: Cap sync
+        run: |
+          if [ ! -f android/settings.gradle ] || [ ! -f android/gradlew ]; then
+            rm -rf android
+            npx cap add android
+          fi
+          npx cap sync android
+
+      - name: Restore native files
+        run: |
+          git checkout -- android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          git checkout -- android/app/src/main/AndroidManifest.xml
+          grep -q 'FieldTraceNative' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FielTrace-history-edit-clear-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error

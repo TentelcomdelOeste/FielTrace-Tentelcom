@@ -238,6 +238,7 @@ export default function App() {
   const [showEvidenceList, setShowEvidenceList] = useState(false);
   const [showQuickConfig, setShowQuickConfig] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'field' | 'evidence', id?: number, index?: number } | null>(null);
+  const [confirmClearAllStep, setConfirmClearAllStep] = useState<0 | 1 | 2>(0);
   const [viewingEvidence, setViewingEvidence] = useState<any | null>(null);
   const [editingEvidence, setEditingEvidence] = useState<any | null>(null);
   const [editConfirmOpen, setEditConfirmOpen] = useState(false);
@@ -247,7 +248,6 @@ export default function App() {
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
-  const reversedEvidences = useMemo(() => [...evidences].reverse(), [evidences]);
 
   // Filters for Summary View
   const [filterDate, setFilterDate] = useState<string>("");
@@ -823,6 +823,17 @@ export default function App() {
                    </button>
                 </div>
 
+                {evidences.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearAllStep(1)}
+                    className="w-full py-3.5 bg-red-50 border border-red-200 rounded-[1.5rem] flex items-center justify-center gap-2 active:scale-95 transition-all shadow-sm"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-600" />
+                    <span className="text-[10px] font-black text-red-600 uppercase tracking-widest">Vaciar registros</span>
+                  </button>
+                )}
+
                 <div className="space-y-2 pb-24">
                   {evidences.length === 0 ? (
                     <div className="py-16 text-center space-y-3">
@@ -830,7 +841,7 @@ export default function App() {
                        <p className="text-[11px] text-gray-400 font-black uppercase tracking-widest leading-relaxed">No hay registros<br/>tecnicos capturados</p>
                     </div>
                   ) : (
-                    reversedEvidences.map((ev) => {
+                    evidences.map((ev) => {
                       const tech = ev.baseFields?.tecnico || '-';
                       const gpsShort = ev.gpsLabel || (ev.latitude ? `${Number(ev.latitude).toFixed(5)}, ${Number(ev.longitude).toFixed(5)}` : 'SIN GPS');
                       const mainField = (ev.customFields || []).find((f: any) => f.active !== false && f.showInPhoto && (f.value || f.name));
@@ -1951,6 +1962,60 @@ export default function App() {
             </div>
           </motion.div>
         )}
+
+        {confirmClearAllStep === 1 && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
+              <h3 className="text-base font-black uppercase tracking-tight text-gray-950">¿Vaciar todos los registros?</h3>
+              <p className="text-sm text-gray-600">
+                Se eliminarán <span className="font-bold text-gray-900">{evidences.length}</span> registro(s) de este proyecto. Las fotos del álbum Field Trace no se borran automáticamente.
+              </p>
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setConfirmClearAllStep(0)} className="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-700 text-[11px] font-black uppercase tracking-wider">Cancelar</button>
+                <button type="button" onClick={() => setConfirmClearAllStep(2)} className="flex-1 py-3.5 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider">Continuar</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {confirmClearAllStep === 2 && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[201] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6">
+            <motion.div initial={{ scale: 0.95 }} animate={{ scale: 1 }} className="bg-white rounded-3xl p-6 w-full max-w-sm space-y-4 shadow-2xl border-2 border-red-200">
+              <h3 className="text-base font-black uppercase tracking-tight text-red-700">Confirmación final</h3>
+              <p className="text-sm text-gray-600">
+                Esta acción <span className="font-bold text-red-600">no se puede deshacer</span>. ¿Eliminar definitivamente todos los registros del proyecto?
+              </p>
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={() => setConfirmClearAllStep(0)} className="flex-1 py-3.5 rounded-2xl bg-gray-100 text-gray-700 text-[11px] font-black uppercase tracking-wider">Cancelar</button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      if (selectedProject?.id != null) {
+                        if ((storageService as any).deleteAllEvidencesByProject) {
+                          await (storageService as any).deleteAllEvidencesByProject(selectedProject.id);
+                        } else {
+                          for (const ev of evidences) {
+                            if (ev.id != null) await storageService.deleteEvidence(ev.id);
+                          }
+                        }
+                        setEvidences([]);
+                      }
+                    } catch (e) {
+                      console.error('[ClearAll] failed', e);
+                    } finally {
+                      setConfirmClearAllStep(0);
+                    }
+                  }}
+                  className="flex-1 py-3.5 rounded-2xl bg-red-600 text-white text-[11px] font-black uppercase tracking-wider"
+                >
+                  Sí, eliminar todo
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
         {editingEvidence && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[190] bg-black/70 backdrop-blur-sm flex flex-col">
             <div className="flex items-center justify-between px-4 py-4 bg-white border-b">
@@ -1963,8 +2028,35 @@ export default function App() {
                 <input type="text" value={editingEvidence.baseFields?.tecnico || ''} onChange={(e) => setEditingEvidence({ ...editingEvidence, baseFields: { ...(editingEvidence.baseFields || {}), tecnico: e.target.value.toUpperCase() } })} className="w-full p-3.5 bg-white border border-gray-100 rounded-2xl text-sm font-bold outline-none" />
               </div>
               {(editingEvidence.customFields || []).map((f: any, idx: number) => (
-                <div key={idx} className="space-y-1.5"><label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{f.name || `Campo ${idx + 1}`}</label>
-                  <input type="text" value={f.value || ''} onChange={(e) => { const fields = [...(editingEvidence.customFields || [])]; fields[idx] = { ...fields[idx], value: e.target.value }; setEditingEvidence({ ...editingEvidence, customFields: fields }); }} className="w-full p-3.5 bg-white border border-gray-100 rounded-2xl text-sm font-bold outline-none" />
+                <div key={idx} className="space-y-3 bg-white border border-gray-100 rounded-2xl p-3.5">
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Descripción</label>
+                    <input
+                      type="text"
+                      value={f.name || ''}
+                      onChange={(e) => {
+                        const fields = [...(editingEvidence.customFields || [])];
+                        fields[idx] = { ...fields[idx], name: e.target.value };
+                        setEditingEvidence({ ...editingEvidence, customFields: fields });
+                      }}
+                      className="w-full p-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-400"
+                      placeholder="Nombre del campo"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Cantidad / Valor</label>
+                    <input
+                      type="text"
+                      value={f.value || ''}
+                      onChange={(e) => {
+                        const fields = [...(editingEvidence.customFields || [])];
+                        fields[idx] = { ...fields[idx], value: e.target.value };
+                        setEditingEvidence({ ...editingEvidence, customFields: fields });
+                      }}
+                      className="w-full p-3.5 bg-gray-50 border border-gray-100 rounded-2xl text-sm font-bold outline-none focus:border-blue-400"
+                      placeholder="Valor"
+                    />
+                  </div>
                 </div>
               ))}
               <button type="button" onClick={() => { setPendingEditSave(editingEvidence); setEditConfirmOpen(true); }} className="w-full py-4 bg-blue-600 text-white rounded-2xl text-sm font-black uppercase">Guardar cambios</button>

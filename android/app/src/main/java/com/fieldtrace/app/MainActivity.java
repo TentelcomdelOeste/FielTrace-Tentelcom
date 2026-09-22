@@ -14,6 +14,7 @@ import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import androidx.core.splashscreen.SplashScreen;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
 import org.json.JSONArray;
@@ -27,6 +28,7 @@ public class MainActivity extends BridgeActivity {
 
   @Override
   public void onCreate(Bundle savedInstanceState) {
+    SplashScreen.installSplashScreen(this);
     super.onCreate(savedInstanceState);
     applyCameraWebViewFixes();
   }
@@ -124,9 +126,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     @JavascriptInterface
-    public void openGallery() {
-      openFieldTraceAlbum();
-    }
+    public void openGallery() { openFieldTraceAlbum(); }
 
     @JavascriptInterface
     public void openFieldTraceAlbum() {
@@ -261,11 +261,7 @@ public class MainActivity extends BridgeActivity {
       try {
         Uri uri = Uri.parse(uriString.trim());
         if (!"content".equalsIgnoreCase(uri.getScheme()) && !"file".equalsIgnoreCase(uri.getScheme())) {
-          try {
-            uri = resolveImageContentUri(uriString.trim());
-          } catch (Exception e) {
-            uri = Uri.parse(uriString.trim());
-          }
+          try { uri = resolveImageContentUri(uriString.trim()); } catch (Exception e) { uri = Uri.parse(uriString.trim()); }
         }
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
@@ -277,7 +273,6 @@ public class MainActivity extends BridgeActivity {
         int w = Math.max(1, bounds.outWidth);
         int h = Math.max(1, bounds.outHeight);
         while (Math.max(w / sample, h / sample) > maxSide) sample *= 2;
-
         BitmapFactory.Options opts = new BitmapFactory.Options();
         opts.inSampleSize = sample;
         Bitmap bmp;
@@ -291,20 +286,14 @@ public class MainActivity extends BridgeActivity {
         float scale = Math.min(1f, (float) maxSide / Math.max(tw, th));
         if (scale < 0.99f) {
           Bitmap scaled = Bitmap.createScaledBitmap(bmp, Math.round(tw * scale), Math.round(th * scale), true);
-          if (scaled != bmp) {
-            bmp.recycle();
-            bmp = scaled;
-          }
+          if (scaled != bmp) { bmp.recycle(); bmp = scaled; }
         }
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         int quality = maxSide > 512 ? 85 : 72;
         bmp.compress(Bitmap.CompressFormat.JPEG, quality, baos);
         bmp.recycle();
-        String b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
-        return "data:image/jpeg;base64," + b64;
-      } catch (Exception e) {
-        return "";
-      }
+        return "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP);
+      } catch (Exception e) { return ""; }
     }
 
     @JavascriptInterface
@@ -313,9 +302,7 @@ public class MainActivity extends BridgeActivity {
         String uri = getLatestFieldTracePhotoUri();
         if (uri == null || uri.isEmpty()) return "";
         return getPhotoThumbnailBase64(uri, maxSide);
-      } catch (Exception e) {
-        return "";
-      }
+      } catch (Exception e) { return ""; }
     }
 
     @JavascriptInterface
@@ -327,11 +314,7 @@ public class MainActivity extends BridgeActivity {
         for (int i = 0; i < arr.length(); i++) {
           String s = arr.optString(i, "");
           if (s.isEmpty()) continue;
-          try {
-            Uri uri = Uri.parse(s);
-            int n = getContentResolver().delete(uri, null, null);
-            if (n > 0) deleted += n;
-          } catch (Exception ignored) {}
+          try { int n = getContentResolver().delete(Uri.parse(s), null, null); if (n > 0) deleted += n; } catch (Exception ignored) {}
         }
       } catch (Exception ignored) {}
       return deleted;
@@ -340,11 +323,7 @@ public class MainActivity extends BridgeActivity {
     @JavascriptInterface
     public int deleteUri(String uriString) {
       if (uriString == null || uriString.trim().isEmpty()) return 0;
-      try {
-        return getContentResolver().delete(Uri.parse(uriString.trim()), null, null);
-      } catch (Exception e) {
-        return 0;
-      }
+      try { return getContentResolver().delete(Uri.parse(uriString.trim()), null, null); } catch (Exception e) { return 0; }
     }
 
     @JavascriptInterface
@@ -356,10 +335,7 @@ public class MainActivity extends BridgeActivity {
         for (int i = 0; i < arr.length(); i++) {
           String s = arr.optString(i, "");
           if (s.isEmpty()) continue;
-          try {
-            Uri u = Uri.parse(s);
-            uris.add(u);
-          } catch (Exception ignored) {}
+          try { uris.add(Uri.parse(s)); } catch (Exception ignored) {}
         }
         if (uris.isEmpty()) return;
         Intent intent;

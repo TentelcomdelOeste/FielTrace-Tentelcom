@@ -145,6 +145,13 @@ jobs:
           ])
           bg.write_bytes(xml.encode('utf-8'))
 
+          # Use the complete public logo for the native launch splash.
+          # This avoids the adaptive launcher mask/frame that was visible during startup.
+          splash = res / 'drawable' / 'splash_icon.png'
+          splash.parent.mkdir(parents=True, exist_ok=True)
+          src.save(splash, 'PNG', optimize=True)
+          print('SPLASH ICON INSTALLED FROM public/pwa-512x512.png')
+
           print('LAUNCHER ICONS INSTALLED FROM public/pwa-512x512.png')
           PY
 

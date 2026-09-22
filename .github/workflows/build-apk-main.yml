@@ -71,6 +71,66 @@ jobs:
           fi
       - name: Sync Capacitor
         run: npx cap sync android
+      - name: Rebuild launcher icon from blue logo only
+        run: |
+          python3 -m pip install --disable-pip-version-check Pillow
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import numpy as np
+          
+          res = Path('android/app/src/main/res')
+          candidates = sorted(res.glob('mipmap-*/ic_launcher_foreground.png'))
+          if not candidates:
+              raise SystemExit('No launcher foreground resource found after Capacitor sync')
+          src = next((p for p in candidates if 'xxxhdpi' in p.parent.name), candidates[-1])
+          img = Image.open(src).convert('RGBA')
+          a = np.array(img)
+          rgb = a[:, :, :3].astype(np.float32) / 255.0
+          mx = rgb.max(axis=2)
+          mn = rgb.min(axis=2)
+          sat = np.divide(mx - mn, mx, out=np.zeros_like(mx), where=mx != 0)
+          val = mx
+          alpha = a[:, :, 3]
+          # Field Trace blue logo: saturated blue pixels only; exclude the pale grid.
+          r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+          blue = (alpha > 0) & (sat >= 0.35) & (val >= 0.35) & (b > r * 1.18) & (b >= g * 1.02)
+          ys, xs = np.where(blue)
+          if len(xs) < 100:
+              raise SystemExit('Could not recover the blue Field Trace logo from launcher source')
+          crop = a[ys.min():ys.max()+1, xs.min():xs.max()+1].copy()
+          crop[:, :, 3] = np.where(blue[ys.min():ys.max()+1, xs.min():xs.max()+1], 255, 0)
+          logo = Image.fromarray(crop, 'RGBA')
+          
+          def fit_logo(size, ratio):
+              n = max(1, int(round(size * ratio)))
+              return logo.resize((n, n), Image.Resampling.LANCZOS)
+          
+          # Non-adaptive fallback/round icons: white background + blue logo.
+          for folder, size in {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}.items():
+              d = res / folder
+              d.mkdir(parents=True, exist_ok=True)
+              canvas = Image.new('RGBA', (size, size), (255,255,255,255))
+              mark = fit_logo(size, 0.68)
+              canvas.alpha_composite(mark, ((size-mark.width)//2, (size-mark.height)//2))
+              for name in ('ic_launcher.png','ic_launcher_round.png'):
+                  canvas.save(d/name, 'PNG')
+          
+          # Adaptive foreground: transparent canvas, blue logo only.
+          for folder, size in {'mipmap-mdpi':108,'mipmap-hdpi':162,'mipmap-xhdpi':216,'mipmap-xxhdpi':324,'mipmap-xxxhdpi':432}.items():
+              d = res / folder
+              canvas = Image.new('RGBA', (size, size), (0,0,0,0))
+              mark = fit_logo(size, 0.66)
+              canvas.alpha_composite(mark, ((size-mark.width)//2, (size-mark.height)//2))
+              canvas.save(d/'ic_launcher_foreground.png', 'PNG')
+          
+          bg = res / 'values' / 'ic_launcher_background.xml'
+          bg.parent.mkdir(parents=True, exist_ok=True)
+          bg.write_text('''<?xml version="1.0" encoding="utf-8"?>\\n<resources>\\n    <color name="ic_launcher_background">#FFFFFF</color>\\n</resources>\\n''', encoding='utf-8')
+          
+          print(f'LAUNCHER ICON REBUILT: source={src} blue_pixels={len(xs)} crop={logo.size}')
+          PY
+          
       - name: Restore committed native files after sync (MainActivity + AndroidManifest)
         run: |
           set -euo pipefail
@@ -111,6 +171,39 @@ jobs:
           fi
           test -s "$OUT/FieldTrace.apk"
           ls -lh "$OUT/FieldTrace.apk"
+      - name: Verify APK launcher icon is clean
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          TMP=$(mktemp -d)
+          unzip -q -o "$APK" 'res/mipmap-xxxhdpi-v4/ic_launcher.png' 'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png' -d "$TMP"
+          python3 -m pip install --disable-pip-version-check Pillow
+          python3 - <<'PY' "$TMP"
+          from pathlib import Path
+          from PIL import Image
+          import numpy as np
+          import sys
+          root=Path(sys.argv[1])
+          fg=np.array(Image.open(root/'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png').convert('RGBA'))
+          rgb=fg[:,:,:3].astype(np.float32)/255.0
+          mx=rgb.max(2); mn=rgb.min(2)
+          sat=np.divide(mx-mn,mx,out=np.zeros_like(mx),where=mx!=0)
+          visible=fg[:,:,3]>8
+          blue=visible & (sat>=0.30) & (rgb[:,:,2]>rgb[:,:,0]*1.15)
+          neutral=visible & (sat<0.20)
+          if blue.sum() < 5000 or neutral.sum() > 2000:
+              raise SystemExit(f'LAUNCHER ICON AUDIT FAILED: blue={blue.sum()} neutral={neutral.sum()}')
+          icon=np.array(Image.open(root/'res/mipmap-xxxhdpi-v4/ic_launcher.png').convert('RGBA'))
+          rgb2=icon[:,:,:3].astype(np.float32)/255.0
+          mx2=rgb2.max(2); mn2=rgb2.min(2)
+          sat2=np.divide(mx2-mn2,mx2,out=np.zeros_like(mx2),where=mx2!=0)
+          colored=(icon[:,:,3]>8) & (sat2>=0.20)
+          blue2=colored & (rgb2[:,:,2]>rgb2[:,:,0]*1.15)
+          if blue2.sum() < 1500:
+              raise SystemExit(f'FALLBACK ICON AUDIT FAILED: blue={blue2.sum()}')
+          print(f'LAUNCHER ICON AUDIT PASSED: adaptive_blue={blue.sum()} adaptive_neutral={neutral.sum()} fallback_blue={blue2.sum()}')
+          PY
+
       - name: Validate APK location permissions (aapt)
         run: |
           set -euo pipefail

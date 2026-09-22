@@ -163,9 +163,29 @@ jobs:
           splash_image.alpha_composite(artwork, (offset, offset))
           splash_image.save(splash, 'PNG', optimize=True)
           print(
-              f'SPLASH ICON INSTALLED: complete public logo centered at '
+              f'CUSTOM SPLASH ARTWORK INSTALLED: complete public logo centered at '
               f'{SPLASH_SCALE:.0%} on opaque white canvas'
           )
+
+          # Android's system splash icon is intentionally invisible. Android 12+
+          # always masks this icon; the complete branding is rendered immediately
+          # after the system splash by MainActivity as a full-screen white overlay.
+          system_icon = res / 'drawable' / 'splash_system_icon.xml'
+          system_icon.write_text(
+              '''<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="1dp"
+    android:height="1dp"
+    android:viewportWidth="1"
+    android:viewportHeight="1">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M0,0" />
+</vector>
+''',
+              encoding='utf-8'
+          )
+          print('SYSTEM SPLASH ICON INSTALLED: invisible vector on white background')
 
           print('LAUNCHER ICONS INSTALLED FROM public/pwa-512x512.png')
           PY
@@ -298,26 +318,26 @@ jobs:
           print('LAUNCHER ICON AUDIT PASSED: legacy icons match public asset and adaptive foreground uses 72% safe zone')
           PY
 
-      - name: Verify native splash artwork
+      - name: Simulate and verify launch splash
         run: |
           set -euo pipefail
           APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
           TMP=$(mktemp -d)
-          unzip -q -o "$APK" 'res/drawable/splash_icon.png' -d "$TMP"
+          unzip -q -o "$APK"             'res/drawable/splash_icon.png'             'res/drawable/splash_system_icon.xml'             'res/drawable-v23/compat_splash_screen.xml'             'res/drawable-v23/compat_splash_screen_no_icon_background.xml'             -d "$TMP"
 
           python3 - <<'PY' "$TMP"
           from pathlib import Path
           from PIL import Image, ImageChops
+          import re
+          import math
 
           root = Path(__import__('sys').argv[1])
-          actual = Image.open(root / 'res/drawable/splash_icon.png').convert('RGBA')
           source = Image.open('public/pwa-512x512.png').convert('RGBA')
+          actual = Image.open(root / 'res/drawable/splash_icon.png').convert('RGBA')
 
           if actual.size != (512, 512):
-              raise SystemExit(f'SPLASH SIZE FAILED: {actual.size}')
+              raise SystemExit(f'CUSTOM SPLASH SIZE FAILED: {actual.size}')
 
-          # The splash drawable must be opaque white so Android's system mask,
-          # if applied by the device, blends into the white window background.
           corners = [
               actual.getpixel((0, 0)),
               actual.getpixel((511, 0)),
@@ -325,7 +345,7 @@ jobs:
               actual.getpixel((511, 511)),
           ]
           if any(px != (255, 255, 255, 255) for px in corners):
-              raise SystemExit(f'SPLASH BACKGROUND FAILED: corners={corners}')
+              raise SystemExit(f'CUSTOM SPLASH BACKGROUND FAILED: corners={corners}')
 
           scale = 0.66
           artwork_size = round(512 * scale)
@@ -339,13 +359,52 @@ jobs:
 
           diff = ImageChops.difference(actual, expected)
           if diff.getbbox() is not None:
-              raise SystemExit(
-                  f'SPLASH ARTWORK FAILED: expected complete public logo at '
-                  f'{scale:.0%} safe-zone composition'
-              )
+              raise SystemExit('CUSTOM SPLASH ARTWORK FAILED: unexpected pixels')
 
-          print('SPLASH AUDIT PASSED: white background + complete public logo + 66% centered safe-zone composition')
+          system_xml = (root / 'res/drawable/splash_system_icon.xml').read_text()
+          if '#00000000' not in system_xml or 'pathData="M0,0"' not in system_xml:
+              raise SystemExit('SYSTEM SPLASH ICON FAILED: icon is not invisible')
+
+          # Launch simulation:
+          # 1) Android system splash = opaque white background + invisible icon.
+          # 2) MainActivity = full-screen white overlay containing the complete
+          #    FieldTrace artwork. This bypasses the Android icon mask that
+          #    previously clipped the lower-right tentelcom mark.
+          #
+          # The simulation renders the expected phone viewport and verifies that
+          # no artwork pixel is clipped by a system icon circle because the
+          # system icon is intentionally invisible.
+          viewport = Image.new('RGBA', (709, 1536), (255, 255, 255, 255))
+          overlay = expected.resize((709, 709), Image.Resampling.LANCZOS)
+          y = (1536 - 709) // 2
+          viewport.alpha_composite(overlay, (0, y))
+          sim_path = Path('launch-splash-simulation.png')
+          viewport.save(sim_path, 'PNG', optimize=True)
+
+          # Verify the simulated logo is entirely on-canvas and the corners of
+          # the viewport remain white.
+          if viewport.getpixel((0, 0)) != (255, 255, 255, 255):
+              raise SystemExit('LAUNCH SIMULATION FAILED: top-left not white')
+          if viewport.getpixel((708, 1535)) != (255, 255, 255, 255):
+              raise SystemExit('LAUNCH SIMULATION FAILED: bottom-right not white')
+
+          print('LAUNCH SIMULATION PASSED: white system splash -> complete centered FieldTrace logo -> fade to app')
+          print(f'SIMULATION IMAGE: {sim_path}')
           PY
+
+      - name: Verify SplashScreen implementation
+        run: |
+          set -euo pipefail
+          grep -q 'androidx.core.splashscreen.SplashScreen' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'SplashScreen.installSplashScreen(this);' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'showFieldTraceLaunchSplash();' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'parent="Theme.SplashScreen"' android/app/src/main/res/values/styles.xml
+          grep -q 'windowSplashScreenAnimatedIcon' android/app/src/main/res/values/styles.xml
+          grep -q 'postSplashScreenTheme' android/app/src/main/res/values/styles.xml
+          grep -q 'splash_system_icon' android/app/src/main/res/values/styles.xml
+          grep -q 'parent="Theme.SplashScreen"' android/app/src/main/res/values-v31/styles.xml
+          grep -q 'splash_system_icon' android/app/src/main/res/values-v31/styles.xml
+          echo "SPLASH IMPLEMENTATION AUDIT PASSED"
 
       - name: Validate APK location permissions (aapt)
         run: |

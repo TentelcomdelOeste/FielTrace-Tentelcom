@@ -199,6 +199,7 @@ jobs:
           grep -q 'getDefaultVideoPoster' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
           echo "NATIVE MAINACTIVITY RESTORED"
           git checkout -- android/app/src/main/AndroidManifest.xml
+          mkdir -p android/app/src/main/res/values android/app/src/main/res/values-v31
           git show HEAD:android/app/src/main/res/values/styles.xml > android/app/src/main/res/values/styles.xml
           git show HEAD:android/app/src/main/res/values-v31/styles.xml > android/app/src/main/res/values-v31/styles.xml
           echo "=== AndroidManifest after restore ==="

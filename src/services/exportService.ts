@@ -103,20 +103,21 @@ export const exportService = {
       ).keys()
     );
 
-    const headers = ['#', 'FECHA', 'HORA', 'TÉCNICO', 'POSTE', 'UBICACIÓN', ...activeFields, 'OBSERVACIONES'];
+    const headers = ['#', 'FECHA', 'HORA', 'TÉCNICO', 'UBICACIÓN / GPS', ...activeFields];
 
     const rows = evidences.map((e, index) => {
       const values = (e.customFields || []).filter(f => f.active !== false);
       const byName = new Map(values.map(f => [f.name, clean(f.value)]));
+      const gps = (Number.isFinite(Number(e.latitude)) && Number.isFinite(Number(e.longitude)))
+        ? `${Number(e.latitude).toFixed(6)}, ${Number(e.longitude).toFixed(6)}`
+        : '—';
       return [
         String(index + 1),
         clean(e.fecha),
         clean(e.hora),
         clean(e.baseFields?.tecnico),
-        clean(e.baseFields?.posteId),
-        clean(e.ubicacion),
-        ...activeFields.map(name => byName.get(name) || '—'),
-        clean(e.baseFields?.observaciones)
+        `${clean(e.ubicacion)}\\n${gps}`,
+        ...activeFields.map(name => byName.get(name) || '—')
       ];
     });
 
@@ -187,13 +188,13 @@ export const exportService = {
 
     drawHeader();
 
-    const baseWidths = [8, 20, 18, 29, 18, 40];
+    const baseWidths = [8, 20, 18, 29, 50];
     const dynamicWidths = activeFields.map(() => 20);
-    const observationWidth = 34;
-    const rawWidths = [...baseWidths, ...dynamicWidths, observationWidth];
+    const rawWidths = [...baseWidths, ...dynamicWidths];
     const rawTotal = rawWidths.reduce((sum, width) => sum + width, 0);
     const scale = Math.min(1, contentWidth / rawTotal);
     const widths = rawWidths.map(width => width * scale);
+    const tableWidth = widths.reduce((sum, width) => sum + width, 0);
 
     const tableX = margin;
     let y = 61;
@@ -223,7 +224,7 @@ export const exportService = {
         x += width;
       });
       doc.line(x, y, x, y + headerHeight);
-      doc.line(tableX, y + headerHeight, tableX + contentWidth, y + headerHeight);
+      doc.line(tableX, y + headerHeight, tableX + tableWidth, y + headerHeight);
       y += headerHeight;
     };
 
@@ -244,7 +245,7 @@ export const exportService = {
       let x = tableX;
       if (rowIndex % 2 === 0) {
         doc.setFillColor(247, 250, 253);
-        doc.rect(tableX, y, contentWidth, rowHeight, 'F');
+        doc.rect(tableX, y, tableWidth, rowHeight, 'F');
       }
 
       doc.setTextColor(...text);
@@ -255,7 +256,7 @@ export const exportService = {
         const lines = cellLines[i];
         const lineHeightLocal = 3.2;
         const startY = y + (rowHeight - lines.length * lineHeightLocal) / 2 + 2.5;
-        const align = i === 5 || i >= 6 ? 'left' : 'center';
+        const align = i === 4 || i >= 5 ? 'left' : 'center';
         doc.text(lines, align === 'left' ? x + 1 : x + widths[i] / 2, startY, { align });
         x += widths[i];
       });
@@ -268,7 +269,7 @@ export const exportService = {
         x += width;
       });
       doc.line(x, y, x, y + rowHeight);
-      doc.line(tableX, y + rowHeight, tableX + contentWidth, y + rowHeight);
+      doc.line(tableX, y + rowHeight, tableX + tableWidth, y + rowHeight);
       y += rowHeight;
     };
 

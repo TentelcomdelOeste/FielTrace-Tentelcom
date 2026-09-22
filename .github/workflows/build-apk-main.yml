@@ -108,9 +108,11 @@ jobs:
               for name in ('ic_launcher.png', 'ic_launcher_round.png'):
                   icon.save(d / name, 'PNG', optimize=True)
 
-          # Android adaptive foreground resources. The same verified public
-          # Field Trace image is used instead of extracting/reconstructing
-          # pixels from the old native launcher asset.
+          # Android adaptive foreground resources need a safe-zone margin.
+          # The previous implementation filled the entire adaptive canvas,
+          # causing Android's launcher mask to crop/zoom the Field Trace artwork.
+          # Keep the verified public image, but scale it to 72% and center it
+          # on a transparent canvas so the full logo remains visible.
           adaptive_sizes = {
               'mipmap-mdpi': 108,
               'mipmap-hdpi': 162,
@@ -118,11 +120,16 @@ jobs:
               'mipmap-xxhdpi': 324,
               'mipmap-xxxhdpi': 432,
           }
+          ADAPTIVE_SCALE = 0.72
 
           for folder, size in adaptive_sizes.items():
               d = res / folder
               d.mkdir(parents=True, exist_ok=True)
-              foreground = src.resize((size, size), Image.Resampling.LANCZOS)
+              artwork_size = round(size * ADAPTIVE_SCALE)
+              artwork = src.resize((artwork_size, artwork_size), Image.Resampling.LANCZOS)
+              foreground = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+              offset = (size - artwork_size) // 2
+              foreground.alpha_composite(artwork, (offset, offset))
               foreground.save(d / 'ic_launcher_foreground.png', 'PNG', optimize=True)
 
           # Adaptive icon background remains a solid white layer. The actual
@@ -239,13 +246,34 @@ jobs:
               'legacy ic_launcher_round xxxhdpi'
           )
 
-          compare(
-              root / 'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png',
-              432,
-              'adaptive foreground xxxhdpi'
+          # Adaptive foreground is intentionally reduced to 72% and centered
+          # inside the 432px safe canvas to prevent launcher-mask cropping.
+          actual_fg = Image.open(
+              root / 'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png'
+          ).convert('RGBA')
+          expected_artwork_size = round(432 * 0.72)
+          expected_artwork = source.resize(
+              (expected_artwork_size, expected_artwork_size),
+              Image.Resampling.LANCZOS
           )
+          expected_fg = Image.new('RGBA', (432, 432), (0, 0, 0, 0))
+          offset = (432 - expected_artwork_size) // 2
+          expected_fg.alpha_composite(expected_artwork, (offset, offset))
 
-          print('LAUNCHER ICON AUDIT PASSED: APK resources match public/pwa-512x512.png')
+          if actual_fg.size != expected_fg.size:
+              raise SystemExit(
+                  f'adaptive foreground size mismatch: actual={actual_fg.size} expected={expected_fg.size}'
+              )
+          from PIL import ImageChops
+          diff = ImageChops.difference(actual_fg, expected_fg)
+          bbox = diff.getbbox()
+          if bbox is not None:
+              raise SystemExit(
+                  f'adaptive foreground does not match 72% safe-zone composition: diff_bbox={bbox}'
+              )
+          print('adaptive foreground xxxhdpi MATCHED 72% SAFE-ZONE COMPOSITION')
+
+          print('LAUNCHER ICON AUDIT PASSED: legacy icons match public asset and adaptive foreground uses 72% safe zone')
           PY
 
       - name: Validate APK location permissions (aapt)

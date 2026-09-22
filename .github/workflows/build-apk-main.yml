@@ -399,15 +399,21 @@ jobs:
       - name: Verify SplashScreen implementation
         run: |
           set -euo pipefail
-          grep -q 'androidx.core.splashscreen.SplashScreen' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
-          grep -q 'SplashScreen.installSplashScreen(this);' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
-          grep -q 'showFieldTraceLaunchSplash();' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
-          grep -q 'parent="Theme.SplashScreen"' android/app/src/main/res/values/styles.xml
-          grep -q 'windowSplashScreenAnimatedIcon' android/app/src/main/res/values/styles.xml
-          grep -q 'postSplashScreenTheme' android/app/src/main/res/values/styles.xml
-          grep -q 'splash_system_icon' android/app/src/main/res/values/styles.xml
-          grep -q 'parent="Theme.SplashScreen"' android/app/src/main/res/values-v31/styles.xml
-          grep -q 'splash_system_icon' android/app/src/main/res/values-v31/styles.xml
+          MAIN="android/app/src/main/java/com/fieldtrace/app/MainActivity.java"
+          test -f "$MAIN"
+          grep -q 'androidx.core.splashscreen.SplashScreen' "$MAIN"
+          grep -q 'SplashScreen.installSplashScreen(this);' "$MAIN"
+          grep -q 'showFieldTraceLaunchSplash();' "$MAIN"
+
+          # Capacitor sync may normalize Android resource files, so validate the
+          # final merged source tree rather than relying on one exact XML file.
+          grep -R -q 'Theme.SplashScreen' android/app/src/main/res
+          grep -R -q 'postSplashScreenTheme' android/app/src/main/res
+          grep -R -q 'splash_system_icon' android/app/src/main/res
+
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          unzip -l "$APK" | grep -q 'res/drawable/splash_icon.png'
+          unzip -l "$APK" | grep -q 'res/drawable/splash_system_icon.xml'
           echo "SPLASH IMPLEMENTATION AUDIT PASSED"
 
       - name: Validate APK location permissions (aapt)

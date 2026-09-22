@@ -71,59 +71,62 @@ jobs:
           fi
       - name: Sync Capacitor
         run: npx cap sync android
-      - name: Rebuild launcher icon from blue logo only
+      - name: Install correct launcher images from public assets
         run: |
-          python3 -m pip install --disable-pip-version-check Pillow numpy
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check Pillow
           python3 - <<'PY'
           from pathlib import Path
           from PIL import Image
-          import numpy as np
-          
+
           res = Path('android/app/src/main/res')
-          candidates = sorted(res.glob('mipmap-*/ic_launcher_foreground.png'))
-          if not candidates:
-              raise SystemExit('No launcher foreground resource found after Capacitor sync')
-          src = next((p for p in candidates if 'xxxhdpi' in p.parent.name), candidates[-1])
-          img = Image.open(src).convert('RGBA')
-          a = np.array(img)
-          rgb = a[:, :, :3].astype(np.float32) / 255.0
-          mx = rgb.max(axis=2)
-          mn = rgb.min(axis=2)
-          sat = np.divide(mx - mn, mx, out=np.zeros_like(mx), where=mx != 0)
-          val = mx
-          alpha = a[:, :, 3]
-          # Field Trace blue logo: saturated blue pixels only; exclude the pale grid.
-          r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
-          blue = (alpha > 0) & (sat >= 0.35) & (val >= 0.35) & (b > r * 1.18) & (b >= g * 1.02)
-          ys, xs = np.where(blue)
-          if len(xs) < 100:
-              raise SystemExit('Could not recover the blue Field Trace logo from launcher source')
-          crop = a[ys.min():ys.max()+1, xs.min():xs.max()+1].copy()
-          crop[:, :, 3] = np.where(blue[ys.min():ys.max()+1, xs.min():xs.max()+1], 255, 0)
-          logo = Image.fromarray(crop, 'RGBA')
-          
-          def fit_logo(size, ratio):
-              n = max(1, int(round(size * ratio)))
-              return logo.resize((n, n), Image.Resampling.LANCZOS)
-          
-          # Non-adaptive fallback/round icons: white background + blue logo.
-          for folder, size in {'mipmap-mdpi':48,'mipmap-hdpi':72,'mipmap-xhdpi':96,'mipmap-xxhdpi':144,'mipmap-xxxhdpi':192}.items():
+          source = Path('public/pwa-512x512.png')
+
+          if not source.is_file():
+              raise SystemExit(f'Launcher source image not found: {source}')
+
+          src = Image.open(source).convert('RGBA')
+          if src.width != 512 or src.height != 512:
+              raise SystemExit(f'Launcher source must be 512x512, got {src.size}')
+
+          print(f'LAUNCHER SOURCE: {source} size={src.size}')
+
+          # Android legacy/round launcher icons. These are the resources used
+          # on devices that do not use adaptive icons.
+          legacy_sizes = {
+              'mipmap-mdpi': 48,
+              'mipmap-hdpi': 72,
+              'mipmap-xhdpi': 96,
+              'mipmap-xxhdpi': 144,
+              'mipmap-xxxhdpi': 192,
+          }
+
+          for folder, size in legacy_sizes.items():
               d = res / folder
               d.mkdir(parents=True, exist_ok=True)
-              canvas = Image.new('RGBA', (size, size), (255,255,255,255))
-              mark = fit_logo(size, 0.68)
-              canvas.alpha_composite(mark, ((size-mark.width)//2, (size-mark.height)//2))
-              for name in ('ic_launcher.png','ic_launcher_round.png'):
-                  canvas.save(d/name, 'PNG')
-          
-          # Adaptive foreground: transparent canvas, blue logo only.
-          for folder, size in {'mipmap-mdpi':108,'mipmap-hdpi':162,'mipmap-xhdpi':216,'mipmap-xxhdpi':324,'mipmap-xxxhdpi':432}.items():
+              icon = src.resize((size, size), Image.Resampling.LANCZOS)
+              for name in ('ic_launcher.png', 'ic_launcher_round.png'):
+                  icon.save(d / name, 'PNG', optimize=True)
+
+          # Android adaptive foreground resources. The same verified public
+          # Field Trace image is used instead of extracting/reconstructing
+          # pixels from the old native launcher asset.
+          adaptive_sizes = {
+              'mipmap-mdpi': 108,
+              'mipmap-hdpi': 162,
+              'mipmap-xhdpi': 216,
+              'mipmap-xxhdpi': 324,
+              'mipmap-xxxhdpi': 432,
+          }
+
+          for folder, size in adaptive_sizes.items():
               d = res / folder
-              canvas = Image.new('RGBA', (size, size), (0,0,0,0))
-              mark = fit_logo(size, 0.66)
-              canvas.alpha_composite(mark, ((size-mark.width)//2, (size-mark.height)//2))
-              canvas.save(d/'ic_launcher_foreground.png', 'PNG')
-          
+              d.mkdir(parents=True, exist_ok=True)
+              foreground = src.resize((size, size), Image.Resampling.LANCZOS)
+              foreground.save(d / 'ic_launcher_foreground.png', 'PNG', optimize=True)
+
+          # Adaptive icon background remains a solid white layer. The actual
+          # launcher artwork comes exclusively from the verified public image.
           bg = res / 'values' / 'ic_launcher_background.xml'
           bg.parent.mkdir(parents=True, exist_ok=True)
           xml = chr(10).join([
@@ -134,10 +137,10 @@ jobs:
               ''
           ])
           bg.write_bytes(xml.encode('utf-8'))
-          
-          print(f'LAUNCHER ICON REBUILT: source={src} blue_pixels={len(xs)} crop={logo.size}')
+
+          print('LAUNCHER ICONS INSTALLED FROM public/pwa-512x512.png')
           PY
-          
+
       - name: Restore committed native files after sync (MainActivity + AndroidManifest)
         run: |
           set -euo pipefail

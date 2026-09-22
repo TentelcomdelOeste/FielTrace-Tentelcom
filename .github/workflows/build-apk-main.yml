@@ -126,7 +126,14 @@ jobs:
           
           bg = res / 'values' / 'ic_launcher_background.xml'
           bg.parent.mkdir(parents=True, exist_ok=True)
-          bg.write_bytes(b'<?xml version="1.0" encoding="utf-8"?>\\n<resources>\\n    <color name="ic_launcher_background">#FFFFFF</color>\\n</resources>\\n')
+          xml = chr(10).join([
+              '<?xml version="1.0" encoding="utf-8"?>',
+              '<resources>',
+              '    <color name="ic_launcher_background">#FFFFFF</color>',
+              '</resources>',
+              ''
+          ])
+          bg.write_bytes(xml.encode('utf-8'))
           
           print(f'LAUNCHER ICON REBUILT: source={src} blue_pixels={len(xs)} crop={logo.size}')
           PY

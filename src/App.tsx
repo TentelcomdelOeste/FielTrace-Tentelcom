@@ -487,14 +487,25 @@ export default function App() {
   };
 
   const handleSaveProject = async () => {
-    if (!editingProject?.name || !editingProject.client) return;
+    if (!editingProject?.name?.trim()) {
+      alert('El Nombre del Proyecto es obligatorio.');
+      return;
+    }
+    if (!editingProject?.client?.trim()) {
+      alert('El Cliente es obligatorio.');
+      return;
+    }
+    if (!editingProject?.techName?.trim()) {
+      alert('El Técnico Responsable es obligatorio.');
+      return;
+    }
     
     // Normalize data
     const normalizedProject = {
       ...editingProject,
       name: editingProject.name.toUpperCase(),
       client: editingProject.client.toUpperCase(),
-      techName: toTitleCase(editingProject.techName || ''),
+      techName: toTitleCase(editingProject.techName),
       createdAt: editingProject.createdAt || new Date()
     } as Project;
 
@@ -1294,19 +1305,6 @@ export default function App() {
                         className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-bold" 
                         placeholder="Nombre completo"
                       />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Tipo</label>
-                      <select 
-                        value={editingProject.type || ''}
-                        onChange={(e) => setEditingProject({...editingProject, type: e.target.value})}
-                        className="w-full p-3 bg-gray-50 border border-gray-100 rounded-xl text-sm font-bold"
-                      >
-                        <option>Redes MT</option>
-                        <option>Alumbrado</option>
-                        <option>Poda</option>
-                        <option>Civil</option>
-                      </select>
                     </div>
                   </div>
 

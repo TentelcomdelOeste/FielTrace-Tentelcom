@@ -14,6 +14,10 @@ import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.view.Gravity;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import androidx.core.splashscreen.SplashScreen;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
@@ -30,6 +34,7 @@ public class MainActivity extends BridgeActivity {
   public void onCreate(Bundle savedInstanceState) {
     SplashScreen.installSplashScreen(this);
     super.onCreate(savedInstanceState);
+    showFieldTraceLaunchSplash();
     applyCameraWebViewFixes();
   }
 
@@ -43,6 +48,58 @@ public class MainActivity extends BridgeActivity {
   public void onResume() {
     super.onResume();
     applyCameraWebViewFixes();
+  }
+
+  /**
+   * Android 12+ always renders a system splash first and masks its icon.
+   * We intentionally keep that system splash visually blank/white and then
+   * render the complete FieldTrace artwork as a short in-app launch overlay.
+   * This is the only way to get the requested full white canvas + complete
+   * logo without the system icon mask clipping the rounded logo.
+   */
+  private void showFieldTraceLaunchSplash() {
+    try {
+      final ViewGroup decor = (ViewGroup) getWindow().getDecorView();
+      final FrameLayout overlay = new FrameLayout(this);
+      overlay.setBackgroundColor(Color.WHITE);
+      overlay.setTag("FieldTraceLaunchSplash");
+
+      final ImageView logo = new ImageView(this);
+      logo.setImageResource(com.fieldtrace.app.R.drawable.splash_icon);
+      logo.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+      logo.setAdjustViewBounds(false);
+
+      FrameLayout.LayoutParams logoParams = new FrameLayout.LayoutParams(
+          ViewGroup.LayoutParams.MATCH_PARENT,
+          ViewGroup.LayoutParams.MATCH_PARENT
+      );
+      logoParams.gravity = Gravity.CENTER;
+      overlay.addView(logo, logoParams);
+
+      decor.addView(
+          overlay,
+          new ViewGroup.LayoutParams(
+              ViewGroup.LayoutParams.MATCH_PARENT,
+              ViewGroup.LayoutParams.MATCH_PARENT
+          )
+      );
+
+      overlay.postDelayed(() -> {
+        try {
+          overlay.animate()
+              .alpha(0f)
+              .setDuration(140L)
+              .withEndAction(() -> {
+                try {
+                  decor.removeView(overlay);
+                } catch (Exception ignored) {}
+              })
+              .start();
+        } catch (Exception ignored) {
+          try { decor.removeView(overlay); } catch (Exception ignored2) {}
+        }
+      }, 650L);
+    } catch (Exception ignored) {}
   }
 
   private void applyCameraWebViewFixes() {

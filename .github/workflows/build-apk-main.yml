@@ -145,12 +145,27 @@ jobs:
           ])
           bg.write_bytes(xml.encode('utf-8'))
 
-          # Use the complete public logo for the native launch splash.
-          # This avoids the adaptive launcher mask/frame that was visible during startup.
+          # Dedicated native splash artwork.
+          #
+          # Android 12+ applies the splash icon mask to the drawable supplied to
+          # windowSplashScreenAnimatedIcon. The launcher icon must remain separate.
+          # To prevent the system mask from cutting the rounded FieldTrace logo,
+          # place the complete public logo on an opaque white canvas and keep the
+          # artwork inside the documented safe area. The white canvas is visually
+          # identical to the white splash background, so no extra frame is visible.
           splash = res / 'drawable' / 'splash_icon.png'
           splash.parent.mkdir(parents=True, exist_ok=True)
-          src.save(splash, 'PNG', optimize=True)
-          print('SPLASH ICON INSTALLED FROM public/pwa-512x512.png')
+          SPLASH_SCALE = 0.66
+          artwork_size = round(512 * SPLASH_SCALE)
+          artwork = src.resize((artwork_size, artwork_size), Image.Resampling.LANCZOS)
+          splash_image = Image.new('RGBA', (512, 512), (255, 255, 255, 255))
+          offset = (512 - artwork_size) // 2
+          splash_image.alpha_composite(artwork, (offset, offset))
+          splash_image.save(splash, 'PNG', optimize=True)
+          print(
+              f'SPLASH ICON INSTALLED: complete public logo centered at '
+              f'{SPLASH_SCALE:.0%} on opaque white canvas'
+          )
 
           print('LAUNCHER ICONS INSTALLED FROM public/pwa-512x512.png')
           PY
@@ -281,6 +296,55 @@ jobs:
           print('adaptive foreground xxxhdpi MATCHED 72% SAFE-ZONE COMPOSITION')
 
           print('LAUNCHER ICON AUDIT PASSED: legacy icons match public asset and adaptive foreground uses 72% safe zone')
+          PY
+
+      - name: Verify native splash artwork
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          TMP=$(mktemp -d)
+          unzip -q -o "$APK" 'res/drawable/splash_icon.png' -d "$TMP"
+
+          python3 - <<'PY' "$TMP"
+          from pathlib import Path
+          from PIL import Image, ImageChops
+
+          root = Path(__import__('sys').argv[1])
+          actual = Image.open(root / 'res/drawable/splash_icon.png').convert('RGBA')
+          source = Image.open('public/pwa-512x512.png').convert('RGBA')
+
+          if actual.size != (512, 512):
+              raise SystemExit(f'SPLASH SIZE FAILED: {actual.size}')
+
+          # The splash drawable must be opaque white so Android's system mask,
+          # if applied by the device, blends into the white window background.
+          corners = [
+              actual.getpixel((0, 0)),
+              actual.getpixel((511, 0)),
+              actual.getpixel((0, 511)),
+              actual.getpixel((511, 511)),
+          ]
+          if any(px != (255, 255, 255, 255) for px in corners):
+              raise SystemExit(f'SPLASH BACKGROUND FAILED: corners={corners}')
+
+          scale = 0.66
+          artwork_size = round(512 * scale)
+          expected_artwork = source.resize(
+              (artwork_size, artwork_size),
+              Image.Resampling.LANCZOS
+          )
+          expected = Image.new('RGBA', (512, 512), (255, 255, 255, 255))
+          offset = (512 - artwork_size) // 2
+          expected.alpha_composite(expected_artwork, (offset, offset))
+
+          diff = ImageChops.difference(actual, expected)
+          if diff.getbbox() is not None:
+              raise SystemExit(
+                  f'SPLASH ARTWORK FAILED: expected complete public logo at '
+                  f'{scale:.0%} safe-zone composition'
+              )
+
+          print('SPLASH AUDIT PASSED: white background + complete public logo + 66% centered safe-zone composition')
           PY
 
       - name: Validate APK location permissions (aapt)

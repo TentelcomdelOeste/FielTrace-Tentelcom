@@ -1,0 +1,144 @@
+name: Clean FieldTrace launcher and splash (blue logo only)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  clean-visual-resources:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Generate clean visual resources
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import colorsys
+
+          ROOT = Path(".")
+          RES = ROOT / "android/app/src/main/res"
+          PUBLIC = ROOT / "public"
+
+          src = PUBLIC / "android-chrome-512x512.png"
+          if not src.exists():
+              src = PUBLIC / "pwa-512x512.png"
+          if not src.exists():
+              raise SystemExit("512x512 source image not found")
+
+          original = Image.open(src).convert("RGBA")
+          px = original.load()
+          clean = Image.new("RGBA", original.size, (255,255,255,255))
+          out = clean.load()
+
+          # Keep only the blue FieldTrace logo.
+          # The source grid is neutral gray/white, so it is removed by the
+          # saturation + blue-dominance test.
+          for y in range(original.height):
+              for x in range(original.width):
+                  r,g,b,a = px[x,y]
+                  rf,gf,bf = r/255,g/255,b/255
+                  h,s,v = colorsys.rgb_to_hsv(rf,gf,bf)
+                  hue = h * 360
+                  blue = (
+                      a > 0
+                      and s >= 0.16
+                      and v >= 0.35
+                      and 175 <= hue <= 245
+                      and b > r * 1.18
+                      and b >= g * 1.02
+                  )
+                  if blue:
+                      out[x,y] = (r,g,b,255)
+                  else:
+                      out[x,y] = (255,255,255,255)
+
+          # Tight crop around the recovered blue artwork.
+          mask = Image.new("L", original.size, 0)
+          mp = mask.load()
+          for y in range(original.height):
+              for x in range(original.width):
+                  r,g,b,a = out[x,y]
+                  if b > r * 1.18 and b >= g * 1.02 and (b-r) > 25:
+                      mp[x,y] = 255
+          bbox = mask.getbbox()
+          if not bbox:
+              raise SystemExit("Could not recover blue logo from 512 source")
+          logo = clean.crop(bbox)
+
+          def make_icon(size, ratio=0.62):
+              canvas = Image.new("RGBA", (size,size), (255,255,255,255))
+              max_side = max(1, round(size * ratio))
+              scale = min(max_side/logo.width, max_side/logo.height)
+              w = max(1, round(logo.width*scale))
+              h = max(1, round(logo.height*scale))
+              art = logo.resize((w,h), Image.Resampling.LANCZOS)
+              canvas.alpha_composite(art, ((size-w)//2, (size-h)//2))
+              return canvas
+
+          launcher_sizes = {
+              "mipmap-mdpi":48,
+              "mipmap-hdpi":72,
+              "mipmap-xhdpi":96,
+              "mipmap-xxhdpi":144,
+              "mipmap-xxxhdpi":192,
+          }
+          foreground_sizes = {
+              "mipmap-mdpi":108,
+              "mipmap-hdpi":162,
+              "mipmap-xhdpi":216,
+              "mipmap-xxhdpi":324,
+              "mipmap-xxxhdpi":432,
+          }
+
+          for folder,size in launcher_sizes.items():
+              d = RES / folder
+              make_icon(size, 0.62).save(d/"ic_launcher.png","PNG")
+              make_icon(size, 0.62).save(d/"ic_launcher_round.png","PNG")
+
+          for folder,size in foreground_sizes.items():
+              d = RES / folder
+              make_icon(size, 0.62).save(d/"ic_launcher_foreground.png","PNG")
+
+          for folder,size in {
+              "drawable":512,
+              "drawable-mdpi":256,
+              "drawable-hdpi":384,
+              "drawable-xhdpi":512,
+              "drawable-xxhdpi":768,
+              "drawable-xxxhdpi":1024,
+          }.items():
+              d = RES / folder
+              make_icon(size, 0.58).save(d/"splash_icon.png","PNG")
+
+          print("CLEAN_BLUE_LOGO_OK", bbox)
+          PY
+
+      - name: Verify only visual PNG resources changed
+        run: |
+          git status --short
+          git diff --name-only | grep -vE '^(android/app/src/main/res/(drawable(-mdpi|-hdpi|-xhdpi|-xxhdpi|-xxxhdpi)?/splash_icon\.png|mipmap-(mdpi|hdpi|xhdpi|xxhdpi|xxxhdpi)/ic_launcher(_round|_foreground)?\.png))$' && {
+            echo "Unexpected non-visual file changed"
+            exit 1
+          } || true
+
+      - name: Commit PNG resources and remove temporary workflow
+        run: |
+          git config user.name "TentelcomdelOeste"
+          git config user.email "tentelcom.info@gmail.com"
+          git add android/app/src/main/res
+          git rm .github/workflows/clean-fieldtrace-icons.yml
+          git commit -m "fix: clean FieldTrace launcher and splash logo" || exit 0
+          git push

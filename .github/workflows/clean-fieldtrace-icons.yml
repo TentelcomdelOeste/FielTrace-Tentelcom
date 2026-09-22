@@ -142,3 +142,5 @@ jobs:
           git rm .github/workflows/clean-fieldtrace-icons.yml
           git commit -m "fix: clean FieldTrace launcher and splash logo" || exit 0
           git push
+
+# Trigger clean visual resource pass.

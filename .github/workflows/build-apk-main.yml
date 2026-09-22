@@ -201,6 +201,13 @@ jobs:
           git checkout -- android/app/src/main/AndroidManifest.xml
           echo "=== AndroidManifest after restore ==="
           cat android/app/src/main/AndroidManifest.xml
+          grep -q 'Theme.SplashScreen' android/app/src/main/res/values/styles.xml
+          grep -q 'postSplashScreenTheme' android/app/src/main/res/values/styles.xml
+          grep -q 'splash_system_icon' android/app/src/main/res/values/styles.xml
+          grep -q 'Theme.SplashScreen' android/app/src/main/res/values-v31/styles.xml
+          grep -q 'postSplashScreenTheme' android/app/src/main/res/values-v31/styles.xml
+          grep -q 'splash_system_icon' android/app/src/main/res/values-v31/styles.xml
+          echo "SPLASH STYLES RESTORED AFTER CAPACITOR SYNC"
           grep -q ACCESS_FINE_LOCATION android/app/src/main/AndroidManifest.xml
           grep -q ACCESS_COARSE_LOCATION android/app/src/main/AndroidManifest.xml
           echo "AndroidManifest location permissions confirmed after sync"

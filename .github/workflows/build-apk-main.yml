@@ -181,37 +181,76 @@ jobs:
           fi
           test -s "$OUT/FieldTrace.apk"
           ls -lh "$OUT/FieldTrace.apk"
-      - name: Verify APK launcher icon is clean
+      - name: Verify APK launcher icon matches public asset
         run: |
           set -euo pipefail
           APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
           TMP=$(mktemp -d)
-          unzip -q -o "$APK" 'res/mipmap-xxxhdpi-v4/ic_launcher.png' 'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png' -d "$TMP"
-          python3 -m pip install --disable-pip-version-check Pillow numpy
+          unzip -q -o "$APK" \
+            'res/mipmap-mdpi-v4/ic_launcher.png' \
+            'res/mipmap-hdpi-v4/ic_launcher.png' \
+            'res/mipmap-xhdpi-v4/ic_launcher.png' \
+            'res/mipmap-xxhdpi-v4/ic_launcher.png' \
+            'res/mipmap-xxxhdpi-v4/ic_launcher.png' \
+            'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png' \
+            'res/mipmap-xxxhdpi-v4/ic_launcher_round.png' \
+            -d "$TMP"
+
+          python3 -m pip install --disable-pip-version-check Pillow
           python3 - <<'PY' "$TMP"
           from pathlib import Path
           from PIL import Image
           import numpy as np
           import sys
-          root=Path(sys.argv[1])
-          fg=np.array(Image.open(root/'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png').convert('RGBA'))
-          rgb=fg[:,:,:3].astype(np.float32)/255.0
-          mx=rgb.max(2); mn=rgb.min(2)
-          sat=np.divide(mx-mn,mx,out=np.zeros_like(mx),where=mx!=0)
-          visible=fg[:,:,3]>8
-          blue=visible & (sat>=0.30) & (rgb[:,:,2]>rgb[:,:,0]*1.15)
-          neutral=visible & (sat<0.20)
-          if blue.sum() < 5000 or neutral.sum() > 2000:
-              raise SystemExit(f'LAUNCHER ICON AUDIT FAILED: blue={blue.sum()} neutral={neutral.sum()}')
-          icon=np.array(Image.open(root/'res/mipmap-xxxhdpi-v4/ic_launcher.png').convert('RGBA'))
-          rgb2=icon[:,:,:3].astype(np.float32)/255.0
-          mx2=rgb2.max(2); mn2=rgb2.min(2)
-          sat2=np.divide(mx2-mn2,mx2,out=np.zeros_like(mx2),where=mx2!=0)
-          colored=(icon[:,:,3]>8) & (sat2>=0.20)
-          blue2=colored & (rgb2[:,:,2]>rgb2[:,:,0]*1.15)
-          if blue2.sum() < 1500:
-              raise SystemExit(f'FALLBACK ICON AUDIT FAILED: blue={blue2.sum()}')
-          print(f'LAUNCHER ICON AUDIT PASSED: adaptive_blue={blue.sum()} adaptive_neutral={neutral.sum()} fallback_blue={blue2.sum()}')
+
+          root = Path(sys.argv[1])
+          source_path = Path('public/pwa-512x512.png')
+          source = Image.open(source_path).convert('RGBA')
+
+          legacy = {
+              'mdpi': 48,
+              'hdpi': 72,
+              'xhdpi': 96,
+              'xxhdpi': 144,
+              'xxxhdpi': 192,
+          }
+
+          def compare(actual_path, expected_size, label):
+              actual = Image.open(actual_path).convert('RGBA')
+              expected = source.resize((expected_size, expected_size), Image.Resampling.LANCZOS)
+              if actual.size != expected.size:
+                  raise SystemExit(f'{label} size mismatch: actual={actual.size} expected={expected.size}')
+              a = np.asarray(actual).astype(np.int16)
+              e = np.asarray(expected).astype(np.int16)
+              diff = np.abs(a - e)
+              mean_diff = float(diff.mean())
+              max_diff = int(diff.max())
+              if mean_diff > 1.5 or max_diff > 30:
+                  raise SystemExit(
+                      f'{label} does not match public asset: mean_diff={mean_diff:.3f} max_diff={max_diff}'
+                  )
+              print(f'{label} MATCHED: mean_diff={mean_diff:.3f} max_diff={max_diff}')
+
+          for density, size in legacy.items():
+              compare(
+                  root / f'res/mipmap-{density}-v4/ic_launcher.png',
+                  size,
+                  f'legacy ic_launcher {density}'
+              )
+
+          compare(
+              root / 'res/mipmap-xxxhdpi-v4/ic_launcher_round.png',
+              192,
+              'legacy ic_launcher_round xxxhdpi'
+          )
+
+          compare(
+              root / 'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png',
+              432,
+              'adaptive foreground xxxhdpi'
+          )
+
+          print('LAUNCHER ICON AUDIT PASSED: APK resources match public/pwa-512x512.png')
           PY
 
       - name: Validate APK location permissions (aapt)

@@ -1094,20 +1094,19 @@ export default function App() {
                     </div>
                   ) : (
                     evidences.map((ev) => {
-                      const tech = ev.baseFields?.tecnico || '-';
-                      const gpsShort = ev.gpsLabel || (ev.latitude ? `${Number(ev.latitude).toFixed(5)}, ${Number(ev.longitude).toFixed(5)}` : 'SIN GPS');
-                      const mainField = (ev.customFields || []).find((f: any) => f.active !== false && f.showInPhoto && (f.value || f.name));
-                      const fieldText = mainField ? (mainField.value ? `${mainField.name}: ${mainField.value}` : mainField.name) : '';
+                      const operationalFields = (ev.customFields || []).filter((f: any) => f.active !== false);
                       return (
                       <div key={ev.id || ev.uuid} className="bg-white border border-gray-100 rounded-2xl px-3.5 py-3 shadow-sm flex items-center gap-3">
                         <div className="w-2 h-2 rounded-full bg-green-500 shrink-0 shadow-[0_0_6px_#22c55e]"></div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <p className="text-[12px] font-black text-gray-950 tracking-tight">{ev.fecha} {ev.hora || ''}</p>
-                            <span className="text-[10px] font-bold text-gray-500 uppercase truncate">{tech}</span>
+                          <p className="text-[12px] font-black text-gray-950 tracking-tight">{ev.fecha} {ev.hora || ''}</p>
+                          <div className="mt-1 space-y-0.5">
+                            {operationalFields.map((field: any, index: number) => (
+                              <p key={index} className="text-[9px] text-gray-500 uppercase truncate">
+                                {field.name || `Campo ${index + 1}`}: {field.value || '-'}
+                              </p>
+                            ))}
                           </div>
-                          <p className="text-[10px] font-mono text-green-700 truncate mt-0.5">{gpsShort}</p>
-                          {fieldText && <p className="text-[9px] text-gray-400 uppercase truncate">{fieldText}</p>}
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
                           <button type="button" onClick={() => setViewingEvidence(ev)} className="w-9 h-9 rounded-xl bg-gray-50 border border-gray-100 flex items-center justify-center text-gray-600 active:scale-95" title="Ver"><Eye className="w-4 h-4" /></button>

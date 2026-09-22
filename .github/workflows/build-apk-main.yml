@@ -200,7 +200,6 @@ jobs:
           python3 - <<'PY' "$TMP"
           from pathlib import Path
           from PIL import Image
-          import numpy as np
           import sys
 
           root = Path(sys.argv[1])
@@ -220,16 +219,12 @@ jobs:
               expected = source.resize((expected_size, expected_size), Image.Resampling.LANCZOS)
               if actual.size != expected.size:
                   raise SystemExit(f'{label} size mismatch: actual={actual.size} expected={expected.size}')
-              a = np.asarray(actual).astype(np.int16)
-              e = np.asarray(expected).astype(np.int16)
-              diff = np.abs(a - e)
-              mean_diff = float(diff.mean())
-              max_diff = int(diff.max())
-              if mean_diff > 1.5 or max_diff > 30:
-                  raise SystemExit(
-                      f'{label} does not match public asset: mean_diff={mean_diff:.3f} max_diff={max_diff}'
-                  )
-              print(f'{label} MATCHED: mean_diff={mean_diff:.3f} max_diff={max_diff}')
+              from PIL import ImageChops
+              diff = ImageChops.difference(actual, expected)
+              bbox = diff.getbbox()
+              if bbox is not None:
+                  raise SystemExit(f'{label} does not match public asset: diff_bbox={bbox}')
+              print(f'{label} MATCHED EXACTLY')
 
           for density, size in legacy.items():
               compare(

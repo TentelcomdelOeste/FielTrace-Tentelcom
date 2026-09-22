@@ -73,7 +73,7 @@ jobs:
         run: npx cap sync android
       - name: Rebuild launcher icon from blue logo only
         run: |
-          python3 -m pip install --disable-pip-version-check Pillow
+          python3 -m pip install --disable-pip-version-check Pillow numpy
           python3 - <<'PY'
           from pathlib import Path
           from PIL import Image
@@ -177,7 +177,7 @@ jobs:
           APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
           TMP=$(mktemp -d)
           unzip -q -o "$APK" 'res/mipmap-xxxhdpi-v4/ic_launcher.png' 'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png' -d "$TMP"
-          python3 -m pip install --disable-pip-version-check Pillow
+          python3 -m pip install --disable-pip-version-check Pillow numpy
           python3 - <<'PY' "$TMP"
           from pathlib import Path
           from PIL import Image

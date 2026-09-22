@@ -361,9 +361,13 @@ jobs:
           if diff.getbbox() is not None:
               raise SystemExit('CUSTOM SPLASH ARTWORK FAILED: unexpected pixels')
 
-          system_xml = (root / 'res/drawable/splash_system_icon.xml').read_text()
-          if '#00000000' not in system_xml or 'pathData="M0,0"' not in system_xml:
-              raise SystemExit('SYSTEM SPLASH ICON FAILED: icon is not invisible')
+          packaged_system_icon = root / 'res/drawable/splash_system_icon.xml'
+          if not packaged_system_icon.is_file() or packaged_system_icon.stat().st_size == 0:
+              raise SystemExit('SYSTEM SPLASH ICON FAILED: vector resource missing from APK')
+
+          source_system_icon = Path('android/app/src/main/res/drawable/splash_system_icon.xml').read_text()
+          if '#00000000' not in source_system_icon or 'pathData="M0,0"' not in source_system_icon:
+              raise SystemExit('SYSTEM SPLASH ICON FAILED: source vector is not invisible')
 
           # Launch simulation:
           # 1) Android system splash = opaque white background + invisible icon.

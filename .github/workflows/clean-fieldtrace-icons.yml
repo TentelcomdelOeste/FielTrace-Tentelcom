@@ -21,6 +21,9 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install Pillow
+        run: python -m pip install --disable-pip-version-check Pillow
+
       - name: Generate clean visual resources
         run: |
           python - <<'PY'

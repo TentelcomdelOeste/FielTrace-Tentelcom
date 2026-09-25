@@ -71,6 +71,16 @@ jobs:
           fi
       - name: Sync Capacitor
         run: npx cap sync android
+      - name: Restore committed Gradle signing configuration after sync
+        run: |
+          set -euo pipefail
+          git checkout -- android/app/build.gradle
+          grep -q 'signingConfigs.fieldTrace' android/app/build.gradle
+          grep -q 'FIELDTRACE_KEYSTORE_PASSWORD' android/app/build.gradle
+          grep -q 'FIELDTRACE_KEY_ALIAS' android/app/build.gradle
+          grep -q 'FIELDTRACE_KEY_PASSWORD' android/app/build.gradle
+          echo "GRADLE SIGNING CONFIG RESTORED AFTER CAPACITOR SYNC"
+
       - name: Install correct launcher images from public assets
         run: |
           set -euo pipefail

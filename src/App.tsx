@@ -352,6 +352,21 @@ export default function App() {
     };
   }, []);
 
+  // Sincronización Firebase: al iniciar y automáticamente cuando vuelve Internet.
+  // La sincronización es local-first y nunca sube fotografías.
+  useEffect(() => {
+    const syncNow = () => {
+      void storageService.syncAllLocalData();
+    };
+
+    syncNow();
+    window.addEventListener('online', syncNow);
+
+    return () => {
+      window.removeEventListener('online', syncNow);
+    };
+  }, []);
+
   const loadData = async () => {
     const allProjects = await storageService.getAllProjects();
     // Sort by createdAt descending (newest first)

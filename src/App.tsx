@@ -261,6 +261,15 @@ export default function App() {
   const [filterTech, setFilterTech] = useState<string>("");
   const [filterField, setFilterField] = useState<string>("");
 
+  const [showSyncDetails, setShowSyncDetails] = useState(false);
+  const [syncSummary, setSyncSummary] = useState({
+    total: 0, synced: 0, pending: 0, failed: 0,
+    projectsSynced: 0, projectsPending: 0, projectsFailed: 0,
+    lastSyncedAt: null as Date | null
+  });
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [retryingEvidenceId, setRetryingEvidenceId] = useState<number | null>(null);
+
   const applyNativeZoom = async (level: number) => {
     const next = Math.max(1, Math.min(8, Math.round(level * 10) / 10));
     setCameraZoom(next);
@@ -352,20 +361,72 @@ export default function App() {
     };
   }, []);
 
-  // Sincronización Firebase: al iniciar y automáticamente cuando vuelve Internet.
-  // La sincronización es local-first y nunca sube fotografías.
+  const refreshSyncSummary = useCallback(async () => {
+    try {
+      const [allEvidences, allProjects] = await Promise.all([
+        storageService.getAllEvidences(),
+        storageService.getAllProjects()
+      ]);
+      const evidenceSynced = allEvidences.filter(e => e.syncStatus === 'synced').length;
+      const evidencePending = allEvidences.filter(e => e.syncStatus === 'pending').length;
+      const evidenceFailed = allEvidences.filter(e => e.syncStatus === 'failed').length;
+      const projectSynced = allProjects.filter(p => p.syncStatus === 'synced').length;
+      const projectPending = allProjects.filter(p => p.syncStatus === 'pending').length;
+      const projectFailed = allProjects.filter(p => p.syncStatus === 'failed').length;
+      const dates = [
+        ...allEvidences.map(e => e.lastSyncedAt).filter(Boolean),
+        ...allProjects.map(p => p.lastSyncedAt).filter(Boolean)
+      ].map(d => new Date(d as any)).filter(d => !Number.isNaN(d.getTime()));
+      setSyncSummary({
+        total: allEvidences.length,
+        synced: evidenceSynced,
+        pending: evidencePending,
+        failed: evidenceFailed,
+        projectsSynced: projectSynced,
+        projectsPending: projectPending,
+        projectsFailed: projectFailed,
+        lastSyncedAt: dates.length ? new Date(Math.max(...dates.map(d => d.getTime()))) : null
+      });
+    } catch (error) {
+      console.warn('[Sync UI] No se pudo actualizar el resumen:', error);
+    }
+  }, []);
+
+  const runSyncNow = useCallback(async () => {
+    if (syncRunning) return;
+    setSyncRunning(true);
+    try {
+      await storageService.syncAllLocalData();
+    } finally {
+      await refreshSyncSummary();
+      setSyncRunning(false);
+    }
+  }, [refreshSyncSummary, syncRunning]);
+
+  const retrySyncEvidence = useCallback(async (id: number) => {
+    if (retryingEvidenceId != null) return;
+    setRetryingEvidenceId(id);
+    try {
+      await storageService.retryEvidenceSync(id);
+    } finally {
+      await refreshSyncSummary();
+      setRetryingEvidenceId(null);
+    }
+  }, [refreshSyncSummary, retryingEvidenceId]);
+
   useEffect(() => {
-    const syncNow = () => {
-      void storageService.syncAllLocalData();
+    const syncNow = async () => {
+      await storageService.syncAllLocalData();
+      await refreshSyncSummary();
     };
-
-    syncNow();
+    void syncNow();
     window.addEventListener('online', syncNow);
-
+    const interval = window.setInterval(() => { void refreshSyncSummary(); }, 2500);
     return () => {
       window.removeEventListener('online', syncNow);
+      window.clearInterval(interval);
     };
-  }, []);
+  }, [refreshSyncSummary]);
 
   const loadData = async () => {
     const allProjects = await storageService.getAllProjects();
@@ -897,14 +958,19 @@ export default function App() {
                 <div className="bg-gray-900 rounded-[2.5rem] p-7 text-white shadow-2xl relative overflow-hidden">
                    <div className="relative z-10">
                      <p className="text-[10px] font-black uppercase opacity-40 mb-2 tracking-widest">Estado de Sincronización</p>
-                     <h3 className="text-xl font-bold leading-tight mb-6">Operando Offline / Local Ready</h3>
-                     <div className="flex gap-4">
-                        <div className="flex items-center gap-1.5 bg-blue-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter">
-                          <CloudUpload className="w-3.5 h-3.5" /> En Espera
-                        </div>
-                        <div className="flex items-center gap-1.5 bg-white/10 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter border border-white/10">
-                          <History className="w-3.5 h-3.5" /> Log
-                        </div>
+                     <h3 className="text-xl font-bold leading-tight mb-3">{syncRunning ? 'Sincronizando...' : syncSummary.failed > 0 ? 'Atención requerida' : syncSummary.pending > 0 ? 'Registros pendientes' : 'Todo sincronizado'}</h3>
+                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mb-5 text-[10px] font-bold uppercase tracking-tight text-white/70">
+                       <span className="text-green-400">✓ {syncSummary.synced} sincronizados</span>
+                       <span className="text-amber-300">↻ {syncSummary.pending} pendientes</span>
+                       <span className="text-red-300">⚠ {syncSummary.failed} con error</span>
+                     </div>
+                     <div className="flex gap-3">
+                        <button type="button" onClick={() => setShowSyncDetails(true)} className="flex items-center gap-1.5 bg-white/10 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter border border-white/10 active:scale-95 transition-transform">
+                          <History className="w-3.5 h-3.5" /> Ver detalles
+                        </button>
+                        <button type="button" onClick={() => void runSyncNow()} disabled={syncRunning || !navigator.onLine} className="flex items-center gap-1.5 bg-blue-600 disabled:bg-white/10 disabled:text-white/40 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-tighter active:scale-95 transition-transform">
+                          <CloudUpload className="w-3.5 h-3.5" /> {syncRunning ? 'Sincronizando' : 'Sincronizar'}
+                        </button>
                      </div>
                    </div>
                    <LayoutGrid className="absolute -right-8 -bottom-8 w-40 h-40 opacity-5" />
@@ -1644,6 +1710,64 @@ export default function App() {
 
             {/* SUCCESS VIEW - REMOVED PER INSTRUCTION, BUT KEPT PLACEHOLDER IF NEEDED */}
           
+        {showSyncDetails && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-sm flex flex-col">
+            <div className="flex items-center gap-3 px-5 py-5 bg-white border-b">
+              <button type="button" onClick={() => setShowSyncDetails(false)} className="w-10 h-10 rounded-2xl bg-gray-50 flex items-center justify-center active:scale-95" aria-label="Volver"><ArrowLeft className="w-5 h-5 text-gray-900" /></button>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-base font-black uppercase tracking-tight text-gray-950">Sincronización</h2>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Estado de los registros locales</p>
+              </div>
+              <button type="button" onClick={() => void runSyncNow()} disabled={syncRunning || !navigator.onLine} className="p-2.5 rounded-xl bg-blue-50 text-blue-600 disabled:opacity-40" aria-label="Sincronizar ahora">
+                <RefreshCcw className={'w-5 h-5 ' + (syncRunning ? 'animate-spin' : '')} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 bg-gray-50 space-y-5">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm"><p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Total local</p><p className="text-3xl font-black text-gray-950 mt-1">{syncSummary.total}</p></div>
+                <div className="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm"><p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Sincronizados</p><p className="text-3xl font-black text-green-600 mt-1">{syncSummary.synced}</p></div>
+                <div className="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm"><p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Pendientes</p><p className="text-3xl font-black text-amber-500 mt-1">{syncSummary.pending}</p></div>
+                <div className="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm"><p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Con error</p><p className="text-3xl font-black text-red-500 mt-1">{syncSummary.failed}</p></div>
+              </div>
+              <div className="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm">
+                <p className="text-[9px] font-black uppercase tracking-widest text-gray-400 mb-2">Última sincronización</p>
+                <p className="text-sm font-black text-gray-950">{syncSummary.lastSyncedAt ? syncSummary.lastSyncedAt.toLocaleString('es-CR', { dateStyle: 'short', timeStyle: 'short' }) : 'Aún no hay registros sincronizados'}</p>
+                <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mt-2">Proyectos: {syncSummary.projectsSynced} sincronizados · {syncSummary.projectsPending} pendientes · {syncSummary.projectsFailed} con error</p>
+              </div>
+              {(syncSummary.pending > 0 || syncSummary.failed > 0) && (
+                <div className="space-y-3">
+                  <div><h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500">Registros pendientes o con error</h3><p className="text-[10px] text-gray-400 mt-1">Cada registro puede reintentarse de forma individual.</p></div>
+                  {evidences.filter(ev => ev.syncStatus === 'pending' || ev.syncStatus === 'failed').map(ev => (
+                    <div key={ev.id || ev.uuid} className="bg-white rounded-3xl p-4 border border-gray-100 shadow-sm">
+                      <div className="flex items-start gap-3">
+                        <div className={'w-9 h-9 rounded-xl flex items-center justify-center ' + (ev.syncStatus === 'failed' ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-500')}>
+                          {ev.syncStatus === 'failed' ? <X className="w-4 h-4" /> : <CloudUpload className="w-4 h-4" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-black uppercase text-gray-950 truncate">{ev.projectName || 'Registro'}</p>
+                          <p className="text-[10px] text-gray-500 mt-1">{ev.fecha || ''} {ev.hora || ''}</p>
+                          <p className={'text-[9px] font-black uppercase mt-1 ' + (ev.syncStatus === 'failed' ? 'text-red-500' : 'text-amber-500')}>{ev.syncStatus === 'failed' ? 'Error de sincronización' : 'Pendiente de sincronizar'}</p>
+                          {ev.syncError && <p className="text-[9px] text-gray-400 mt-1 line-clamp-2">{ev.syncError}</p>}
+                        </div>
+                        <button type="button" disabled={retryingEvidenceId === ev.id || ev.id == null} onClick={() => ev.id != null && void retrySyncEvidence(ev.id)} className="shrink-0 px-3 py-2 rounded-xl bg-blue-50 text-blue-600 text-[9px] font-black uppercase disabled:opacity-40">
+                          {retryingEvidenceId === ev.id ? 'Reintentando...' : 'Reintentar'}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {syncSummary.pending === 0 && syncSummary.failed === 0 && (
+                <div className="bg-white rounded-3xl p-8 border border-gray-100 shadow-sm text-center">
+                  <CheckCircle2 className="w-10 h-10 text-green-500 mx-auto mb-3" />
+                  <p className="text-sm font-black uppercase text-gray-950">Todo sincronizado</p>
+                  <p className="text-[10px] text-gray-400 mt-1">Los registros locales disponibles ya tienen respaldo en Firebase.</p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+
         {showEvidenceList && (
           <motion.div
             initial={{ opacity: 0 }}

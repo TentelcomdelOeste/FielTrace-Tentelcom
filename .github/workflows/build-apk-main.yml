@@ -287,7 +287,7 @@ jobs:
           FIELDTRACE_KEYSTORE_PASSWORD: ${{ secrets.FIELDTRACE_KEYSTORE_PASSWORD }}
           FIELDTRACE_KEY_ALIAS: ${{ secrets.FIELDTRACE_KEY_ALIAS }}
           FIELDTRACE_KEY_PASSWORD: ${{ secrets.FIELDTRACE_KEY_PASSWORD }}
-        run: ./gradlew assembleDebug --no-daemon -PversionCode=${GITHUB_RUN_NUMBER}
+        run: ./gradlew assembleDebug --no-daemon
       - name: Rename APK to FieldTrace.apk
         run: |
           set -euo pipefail

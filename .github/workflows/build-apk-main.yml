@@ -78,7 +78,7 @@ jobs:
           grep -q 'signingConfigs.fieldTrace' android/app/build.gradle
           grep -q 'FIELDTRACE_KEYSTORE_PASSWORD' android/app/build.gradle
           grep -q 'FIELDTRACE_KEY_ALIAS' android/app/build.gradle
-          grep -q 'FIELDTRACE_KEY_PASSWORD' android/app/build.gradle
+          grep -q 'keyPassword System.getenv("FIELDTRACE_KEYSTORE_PASSWORD")' android/app/build.gradle
           echo "GRADLE SIGNING CONFIG RESTORED AFTER CAPACITOR SYNC"
 
       - name: Install correct launcher images from public assets

@@ -351,6 +351,32 @@ export const storageService = {
   },
 
   /**
+   * Fuerza el reintento de una evidencia concreta sin afectar las demás.
+   * El registro vuelve a quedar pendiente localmente y luego se procesa con la
+   * misma ruta de sincronización normal.
+   */
+  async retryEvidenceSync(id: number): Promise<boolean> {
+    const existing = await manager.get<Evidence>(STORE_EVIDENCES, id);
+    if (!existing) return false;
+
+    const pending: Evidence = {
+      ...existing,
+      syncStatus: 'pending',
+      syncError: undefined,
+      updatedAt: new Date(),
+      retryCount: existing.retryCount ?? 0
+    };
+
+    await manager.put(STORE_EVIDENCES, pending);
+
+    if (!navigator.onLine) return false;
+
+    await this.syncAllLocalData();
+    const updated = await manager.get<Evidence>(STORE_EVIDENCES, id);
+    return updated?.syncStatus === 'synced';
+  },
+
+  /**
    * Consulta optimizada usando índice IDBIndex 'projectId' (sin filtrado en memoria).
    */
   async getEvidencesByProject(projectId: number): Promise<Evidence[]> {

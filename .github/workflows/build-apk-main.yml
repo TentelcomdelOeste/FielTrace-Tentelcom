@@ -238,12 +238,22 @@ jobs:
           grep -q ACCESS_FINE_LOCATION android/app/src/main/AndroidManifest.xml
           grep -q ACCESS_COARSE_LOCATION android/app/src/main/AndroidManifest.xml
           echo "NATIVE FILES AND SPLASH STYLES RESTORED AFTER CAPACITOR SYNC"
+      - name: Restore persistent APK signing key
+        run: |
+          set -euo pipefail
+          test -n "${{ secrets.FIELDTRACE_KEYSTORE_B64 }}" || { echo "FIELDTRACE_KEYSTORE_B64 is required"; exit 1; }
+          echo "${{ secrets.FIELDTRACE_KEYSTORE_B64 }}" | base64 --decode > android/app/fieldtrace-signing.jks
+          test -s android/app/fieldtrace-signing.jks
       - name: Prepare Gradle
         working-directory: android
         run: chmod +x gradlew
       - name: Build debug APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        env:
+          FIELDTRACE_KEYSTORE_PASSWORD: ${{ secrets.FIELDTRACE_KEYSTORE_PASSWORD }}
+          FIELDTRACE_KEY_ALIAS: ${{ secrets.FIELDTRACE_KEY_ALIAS }}
+          FIELDTRACE_KEY_PASSWORD: ${{ secrets.FIELDTRACE_KEY_PASSWORD }}
+        run: ./gradlew assembleDebug --no-daemon -PversionCode=${GITHUB_RUN_NUMBER}
       - name: Rename APK to FieldTrace.apk
         run: |
           set -euo pipefail

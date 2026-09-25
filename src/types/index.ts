@@ -47,6 +47,8 @@ export interface Project {
   lastSyncedAt?: Date;
   syncError?: string;
   retryCount?: number;
+  // Versionado de esquema de sincronización remota. Permite migrar una vez los registros antiguos.
+  syncSchemaVersion?: number;
 }
 
 export interface CustomField {
@@ -73,6 +75,8 @@ export interface Evidence {
   id?: number;
   uuid: string;
   projectId: number;
+  // UUID permanente del proyecto en Firebase; independiente del ID numérico local.
+  projectUuid?: string;
   projectName?: string;
   photoPath: string; // Referencia robusta: FT_<uuid>.jpg
   photo?: {
@@ -102,6 +106,8 @@ export interface Evidence {
   lastSyncedAt?: Date;
   syncError?: string;
   retryCount: number;
+  // Versionado de esquema de sincronización remota.
+  syncSchemaVersion?: number;
 }
 
 export interface Template {

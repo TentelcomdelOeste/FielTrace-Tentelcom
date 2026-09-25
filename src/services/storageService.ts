@@ -234,6 +234,8 @@ export const storageService = {
    */
   async prepareLocalDataForSync(): Promise<void> {
     const projects = await manager.getAll<Project>(STORE_PROJECTS);
+    const normalizedProjects: Project[] = [];
+
     for (const project of projects) {
       const normalized: Project = {
         ...project,
@@ -243,14 +245,18 @@ export const storageService = {
         retryCount: project.retryCount ?? 0,
         syncSchemaVersion: project.syncSchemaVersion ?? 0
       };
+      normalizedProjects.push(normalized);
+
       if (JSON.stringify(normalized) !== JSON.stringify(project)) {
         await manager.put(STORE_PROJECTS, normalized);
       }
     }
 
+    const projectById = new Map(normalizedProjects.map(project => [project.id, project]));
     const evidences = await manager.getAll<Evidence>(STORE_EVIDENCES);
-    const projectById = new Map(projects.map(project => [project.id, project]));
+
     for (const evidence of evidences) {
+      const project = projectById.get(evidence.projectId);
       const normalized: Evidence = {
         ...evidence,
         uuid: evidence.uuid || makeLegacyUuid('evidence', evidence.id),
@@ -258,9 +264,10 @@ export const storageService = {
         createdAt: evidence.createdAt || evidence.capturedAt || new Date(),
         updatedAt: evidence.updatedAt || evidence.createdAt || new Date(),
         retryCount: evidence.retryCount ?? 0,
-        projectUuid: evidence.projectUuid || projects.find(p => p.id === evidence.projectId)?.uuid,
+        projectUuid: evidence.projectUuid || project?.uuid,
         syncSchemaVersion: evidence.syncSchemaVersion ?? 0
       };
+
       if (JSON.stringify(normalized) !== JSON.stringify(evidence)) {
         await manager.put(STORE_EVIDENCES, normalized);
       }
@@ -302,6 +309,8 @@ export const storageService = {
       }
 
       const evidences = await manager.getAll<Evidence>(STORE_EVIDENCES);
+      const projectById = new Map(projects.map(project => [project.id, project]));
+
       for (const evidence of evidences) {
         if (evidence.syncStatus === 'synced' && evidence.syncSchemaVersion === CURRENT_SYNC_SCHEMA_VERSION) continue;
         const project = projectById.get(evidence.projectId);
@@ -397,6 +406,7 @@ export const storageService = {
         if (success) {
           updated.syncStatus = 'synced';
           updated.lastSyncedAt = new Date();
+          updated.syncSchemaVersion = CURRENT_SYNC_SCHEMA_VERSION;
           await manager.put(STORE_EVIDENCES, updated);
         }
       }).catch(() => {});

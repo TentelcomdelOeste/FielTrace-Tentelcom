@@ -17,6 +17,14 @@ const STORE_PHOTOS = 'photos'; // Web preview fallback only
 const STORE_TEMPLATES = 'templates';
 const STORE_SYNC_QUEUE = 'syncQueue';
 
+// Evita ciclos de sincronización concurrentes al iniciar la app y al recuperar conexión.
+let syncInProgress = false;
+
+function makeLegacyUuid(prefix: string, id: number | undefined): string {
+  if (id != null) return `legacy_${prefix}_${id}`;
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 class StorageManager {
   private db: IDBDatabase | null = null;
 
@@ -215,27 +223,107 @@ export const storageService = {
     return evidenceId;
   },
 
-  async syncPendingEvidences(): Promise<number> {
-    if (!navigator.onLine) return 0;
+  /**
+   * Prepara registros antiguos para sincronización sin borrar ni recrear datos.
+   * Los registros existentes conservan su ID local; únicamente se agregan los
+   * metadatos de sincronización que les falten.
+   */
+  async prepareLocalDataForSync(): Promise<void> {
+    const projects = await manager.getAll<Project>(STORE_PROJECTS);
+    for (const project of projects) {
+      const normalized: Project = {
+        ...project,
+        uuid: project.uuid || makeLegacyUuid('project', project.id),
+        syncStatus: project.syncStatus || 'pending',
+        updatedAt: project.updatedAt || project.createdAt || new Date(),
+        retryCount: project.retryCount ?? 0
+      };
+      if (JSON.stringify(normalized) !== JSON.stringify(project)) {
+        await manager.put(STORE_PROJECTS, normalized);
+      }
+    }
+
+    const evidences = await manager.getAll<Evidence>(STORE_EVIDENCES);
+    for (const evidence of evidences) {
+      const normalized: Evidence = {
+        ...evidence,
+        uuid: evidence.uuid || makeLegacyUuid('evidence', evidence.id),
+        syncStatus: evidence.syncStatus || 'pending',
+        createdAt: evidence.createdAt || evidence.capturedAt || new Date(),
+        updatedAt: evidence.updatedAt || evidence.createdAt || new Date(),
+        retryCount: evidence.retryCount ?? 0
+      };
+      if (JSON.stringify(normalized) !== JSON.stringify(evidence)) {
+        await manager.put(STORE_EVIDENCES, normalized);
+      }
+    }
+  },
+
+  /**
+   * Sincroniza proyectos y evidencias locales. Los registros antiguos sin estado
+   * de sincronización también entran aquí. Las fotos nunca se suben.
+   */
+  async syncAllLocalData(): Promise<{ projects: number; evidences: number }> {
+    if (!navigator.onLine || syncInProgress) return { projects: 0, evidences: 0 };
+    syncInProgress = true;
+
     try {
-      const pendingEvidences = await this.getEvidencesBySyncStatus('pending');
-      let syncedCount = 0;
-      for (const ev of pendingEvidences) {
-        const success = await firebaseService.syncEvidenceToCloud(ev);
+      await this.prepareLocalDataForSync();
+
+      let projectsSynced = 0;
+      let evidencesSynced = 0;
+
+      const projects = await manager.getAll<Project>(STORE_PROJECTS);
+      for (const project of projects) {
+        if (project.syncStatus === 'synced') continue;
+        const success = await firebaseService.syncProjectToCloud(project);
         if (success) {
-          ev.syncStatus = 'synced';
-          ev.lastSyncedAt = new Date();
-          if (ev.id) {
-            await manager.put(STORE_EVIDENCES, ev);
-          }
-          syncedCount++;
+          project.syncStatus = 'synced';
+          project.lastSyncedAt = new Date();
+          project.syncError = undefined;
+          project.retryCount = 0;
+          if (project.id != null) await manager.put(STORE_PROJECTS, project);
+          projectsSynced++;
+        } else {
+          project.syncStatus = 'failed';
+          project.retryCount = (project.retryCount ?? 0) + 1;
+          project.syncError = 'No se pudo sincronizar con Firebase.';
+          if (project.id != null) await manager.put(STORE_PROJECTS, project);
         }
       }
-      return syncedCount;
+
+      const evidences = await manager.getAll<Evidence>(STORE_EVIDENCES);
+      for (const evidence of evidences) {
+        if (evidence.syncStatus === 'synced') continue;
+        const success = await firebaseService.syncEvidenceToCloud(evidence);
+        if (success) {
+          evidence.syncStatus = 'synced';
+          evidence.lastSyncedAt = new Date();
+          evidence.syncError = undefined;
+          evidence.retryCount = 0;
+          if (evidence.id != null) await manager.put(STORE_EVIDENCES, evidence);
+          evidencesSynced++;
+        } else {
+          evidence.syncStatus = 'failed';
+          evidence.retryCount = (evidence.retryCount ?? 0) + 1;
+          evidence.syncError = 'No se pudo sincronizar con Firebase.';
+          if (evidence.id != null) await manager.put(STORE_EVIDENCES, evidence);
+        }
+      }
+
+      console.log(`[StorageService] Sync completa: ${projectsSynced} proyectos, ${evidencesSynced} evidencias.`);
+      return { projects: projectsSynced, evidences: evidencesSynced };
     } catch (e) {
-      console.error('[StorageService] Error syncing pending evidences:', e);
-      return 0;
+      console.error('[StorageService] Error en sincronización completa:', e);
+      return { projects: 0, evidences: 0 };
+    } finally {
+      syncInProgress = false;
     }
+  },
+
+  async syncPendingEvidences(): Promise<number> {
+    const result = await this.syncAllLocalData();
+    return result.evidences;
   },
 
   /**

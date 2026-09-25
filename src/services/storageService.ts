@@ -379,6 +379,10 @@ export const storageService = {
   /**
    * Consulta optimizada usando índice IDBIndex 'projectId' (sin filtrado en memoria).
    */
+  async getAllEvidences(): Promise<Evidence[]> {
+    return manager.getAll<Evidence>(STORE_EVIDENCES);
+  },
+
   async getEvidencesByProject(projectId: number): Promise<Evidence[]> {
     const db = await manager.init();
     return new Promise((resolve, reject) => {

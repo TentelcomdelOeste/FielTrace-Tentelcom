@@ -22,7 +22,7 @@ android {
             storeFile file("fieldtrace-signing.jks")
             storePassword System.getenv("FIELDTRACE_KEYSTORE_PASSWORD")
             keyAlias System.getenv("FIELDTRACE_KEY_ALIAS")
-            keyPassword System.getenv("FIELDTRACE_KEY_PASSWORD")
+            // PKCS12 keystores use the store password for the private-key entry as well.\n            keyPassword System.getenv("FIELDTRACE_KEYSTORE_PASSWORD")
         }
     }
 

@@ -16,6 +16,7 @@ const STORE_EVIDENCES = 'evidences';
 const STORE_PHOTOS = 'photos'; // Web preview fallback only
 const STORE_TEMPLATES = 'templates';
 const STORE_SYNC_QUEUE = 'syncQueue';
+const CURRENT_SYNC_SCHEMA_VERSION = 2;
 
 // Evita ciclos de sincronización concurrentes al iniciar la app y al recuperar conexión.
 let syncInProgress = false;
@@ -193,11 +194,14 @@ export const storageService = {
    * En Web, se guarda un respaldo temporal en STORE_PHOTOS para la vista previa de la app.
    */
   async addEvidence(evidence: Evidence, imageBase64: string): Promise<number> {
+    const project = await this.getProject(evidence.projectId);
     const evidenceToSave: Evidence = {
       ...evidence,
+      projectUuid: evidence.projectUuid || project?.uuid,
       updatedAt: new Date(),
       syncStatus: 'pending',
-      retryCount: evidence.retryCount ?? 0
+      retryCount: evidence.retryCount ?? 0,
+      syncSchemaVersion: CURRENT_SYNC_SCHEMA_VERSION
     };
 
     const evidenceId = await manager.add(STORE_EVIDENCES, evidenceToSave);
@@ -236,7 +240,8 @@ export const storageService = {
         uuid: project.uuid || makeLegacyUuid('project', project.id),
         syncStatus: project.syncStatus || 'pending',
         updatedAt: project.updatedAt || project.createdAt || new Date(),
-        retryCount: project.retryCount ?? 0
+        retryCount: project.retryCount ?? 0,
+        syncSchemaVersion: project.syncSchemaVersion ?? 0
       };
       if (JSON.stringify(normalized) !== JSON.stringify(project)) {
         await manager.put(STORE_PROJECTS, normalized);
@@ -244,6 +249,7 @@ export const storageService = {
     }
 
     const evidences = await manager.getAll<Evidence>(STORE_EVIDENCES);
+    const projectById = new Map(projects.map(project => [project.id, project]));
     for (const evidence of evidences) {
       const normalized: Evidence = {
         ...evidence,
@@ -251,7 +257,9 @@ export const storageService = {
         syncStatus: evidence.syncStatus || 'pending',
         createdAt: evidence.createdAt || evidence.capturedAt || new Date(),
         updatedAt: evidence.updatedAt || evidence.createdAt || new Date(),
-        retryCount: evidence.retryCount ?? 0
+        retryCount: evidence.retryCount ?? 0,
+        projectUuid: evidence.projectUuid || projects.find(p => p.id === evidence.projectId)?.uuid,
+        syncSchemaVersion: evidence.syncSchemaVersion ?? 0
       };
       if (JSON.stringify(normalized) !== JSON.stringify(evidence)) {
         await manager.put(STORE_EVIDENCES, normalized);
@@ -275,13 +283,14 @@ export const storageService = {
 
       const projects = await manager.getAll<Project>(STORE_PROJECTS);
       for (const project of projects) {
-        if (project.syncStatus === 'synced') continue;
+        if (project.syncStatus === 'synced' && project.syncSchemaVersion === CURRENT_SYNC_SCHEMA_VERSION) continue;
         const success = await firebaseService.syncProjectToCloud(project);
         if (success) {
           project.syncStatus = 'synced';
           project.lastSyncedAt = new Date();
           project.syncError = undefined;
           project.retryCount = 0;
+          project.syncSchemaVersion = CURRENT_SYNC_SCHEMA_VERSION;
           if (project.id != null) await manager.put(STORE_PROJECTS, project);
           projectsSynced++;
         } else {
@@ -294,13 +303,19 @@ export const storageService = {
 
       const evidences = await manager.getAll<Evidence>(STORE_EVIDENCES);
       for (const evidence of evidences) {
-        if (evidence.syncStatus === 'synced') continue;
-        const success = await firebaseService.syncEvidenceToCloud(evidence);
+        if (evidence.syncStatus === 'synced' && evidence.syncSchemaVersion === CURRENT_SYNC_SCHEMA_VERSION) continue;
+        const project = projectById.get(evidence.projectId);
+        const evidenceForCloud = {
+          ...evidence,
+          projectUuid: evidence.projectUuid || project?.uuid
+        };
+        const success = await firebaseService.syncEvidenceToCloud(evidenceForCloud);
         if (success) {
           evidence.syncStatus = 'synced';
           evidence.lastSyncedAt = new Date();
           evidence.syncError = undefined;
           evidence.retryCount = 0;
+          evidence.syncSchemaVersion = CURRENT_SYNC_SCHEMA_VERSION;
           if (evidence.id != null) await manager.put(STORE_EVIDENCES, evidence);
           evidencesSynced++;
         } else {

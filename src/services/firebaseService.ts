@@ -2,6 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Firebase Initialization and Firestore service for Field Trace (Phase 3)
+ * Cloud persistence: deleting locally never issues a remote delete.
  * NO photos are uploaded or stored in Firebase. Only evidence metadata.
  */
 
@@ -64,16 +65,18 @@ export const firebaseService = {
       }
 
       const evidenceUuid = evidence.uuid || `ev_${Date.now()}`;
-      const projectId = evidence.projectId || 'default_project';
+      const projectUuid = evidence.projectUuid || `legacy_project_${evidence.projectId || 'default'}`;
 
-      // Estructura limpia y escalable en Firestore:
-      // projects/{projectId}/evidences/{evidenceUuid}
-      const docRef = doc(db, 'projects', String(projectId), 'evidences', evidenceUuid);
+      // La nube usa UUID permanentes, no los IDs numéricos locales del dispositivo.
+      // Esto permite que varios dispositivos puedan referirse al mismo proyecto.
+      // projects/{projectUuid}/evidences/{evidenceUuid}
+      const docRef = doc(db, 'projects', String(projectUuid), 'evidences', evidenceUuid);
 
       // Copia limpia sin objetos binarios ni datos pesados de foto
       const cloudPayload = {
         uuid: evidenceUuid,
         projectId: evidence.projectId,
+        projectUuid,
         projectName: evidence.projectName || '',
         fecha: evidence.fecha || '',
         hora: evidence.hora || '',
@@ -91,7 +94,8 @@ export const firebaseService = {
         photoPath: evidence.photoPath || '', // Solo referencia de archivo, nunca la foto física
         createdAt: evidence.createdAt ? new Date(evidence.createdAt).toISOString() : new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        syncStatus: 'synced'
+        syncStatus: 'synced',
+        schemaVersion: 2
       };
 
       await setDoc(docRef, cloudPayload, { merge: true });
@@ -116,7 +120,8 @@ export const firebaseService = {
       }
 
       const projectUuid = project.uuid || `proj_${Date.now()}`;
-      const docRef = doc(db, 'projects', String(project.id || projectUuid));
+      // La ruta canónica del proyecto es su UUID permanente.
+      const docRef = doc(db, 'projects', String(projectUuid));
 
       const projectPayload = {
         uuid: projectUuid,
@@ -126,7 +131,8 @@ export const firebaseService = {
         description: project.description || '',
         techName: project.techName || '',
         updatedAt: new Date().toISOString(),
-        syncStatus: 'synced'
+        syncStatus: 'synced',
+        schemaVersion: 2
       };
 
       await setDoc(docRef, projectPayload, { merge: true });

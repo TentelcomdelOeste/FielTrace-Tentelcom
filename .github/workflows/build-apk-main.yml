@@ -244,6 +244,30 @@ jobs:
           test -n "${{ secrets.FIELDTRACE_KEYSTORE_B64 }}" || { echo "FIELDTRACE_KEYSTORE_B64 is required"; exit 1; }
           echo "${{ secrets.FIELDTRACE_KEYSTORE_B64 }}" | base64 --decode > android/app/fieldtrace-signing.jks
           test -s android/app/fieldtrace-signing.jks
+      - name: Verify persistent signing key before APK
+        env:
+          FIELDTRACE_KEYSTORE_PASSWORD: ${{ secrets.FIELDTRACE_KEYSTORE_PASSWORD }}
+          FIELDTRACE_KEY_ALIAS: ${{ secrets.FIELDTRACE_KEY_ALIAS }}
+          FIELDTRACE_KEY_PASSWORD: ${{ secrets.FIELDTRACE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -s android/app/fieldtrace-signing.jks
+          test -n "$FIELDTRACE_KEYSTORE_PASSWORD"
+          test -n "$FIELDTRACE_KEY_ALIAS"
+          test -n "$FIELDTRACE_KEY_PASSWORD"
+
+          EXPECTED_SHA256="73:9A:14:31:97:70:03:51:92:30:B0:B4:84:15:5F:90:3F:F2:F8:52:1B:40:C3:7A:8B:A1:8F:B2:67:B0:DC:B3"
+          KEYTOOL_OUT=$(keytool -list -v \
+            -keystore android/app/fieldtrace-signing.jks \
+            -storepass "$FIELDTRACE_KEYSTORE_PASSWORD" \
+            -alias "$FIELDTRACE_KEY_ALIAS" \
+            2>&1)
+
+          echo "$KEYTOOL_OUT" | grep -q "Alias name: $FIELDTRACE_KEY_ALIAS"
+          echo "$KEYTOOL_OUT" | grep -q "SHA256: $EXPECTED_SHA256"
+          echo "PERSISTENT KEY VERIFIED BEFORE BUILD"
+          echo "Certificate SHA-256: $EXPECTED_SHA256"
+
       - name: Prepare Gradle
         working-directory: android
         run: chmod +x gradlew
@@ -274,6 +298,28 @@ jobs:
           fi
           test -s "$OUT/FieldTrace.apk"
           ls -lh "$OUT/FieldTrace.apk"
+      - name: Verify APK signature
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          test -s "$APK"
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          test -x "$APKSIGNER"
+
+          VERIFY_OUT=$("$APKSIGNER" verify --verbose --print-certs "$APK" 2>&1)
+          echo "$VERIFY_OUT"
+
+          EXPECTED_SHA256="73:9A:14:31:97:70:03:51:92:30:B0:B4:84:15:5F:90:3F:F2:F8:52:1B:40:C3:7A:8B:A1:8F:B2:67:B0:DC:B3"
+          echo "$VERIFY_OUT" | grep -q "Signer #1 certificate SHA-256 digest: $EXPECTED_SHA256"
+          if echo "$VERIFY_OUT" | grep -q "CN=Android Debug"; then
+            echo "FAIL: APK is signed with Android Debug instead of the persistent FieldTrace key"
+            exit 1
+          fi
+
+          echo "APK SIGNATURE VERIFIED: persistent FieldTrace certificate is active"
+          echo "APK signature SHA-256: $EXPECTED_SHA256"
+
       - name: Verify APK launcher icon matches public asset
         run: |
           set -euo pipefail

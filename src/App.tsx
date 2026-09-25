@@ -267,6 +267,18 @@ export default function App() {
     projectsSynced: 0, projectsPending: 0, projectsFailed: 0,
     lastSyncedAt: null as Date | null
   });
+  const [syncProjectDetails, setSyncProjectDetails] = useState<Array<{
+    id: number;
+    name: string;
+    client: string;
+    status: 'synced' | 'pending' | 'failed';
+    total: number;
+    synced: number;
+    pending: number;
+    failed: number;
+    lastSyncedAt: Date | null;
+  }>>([]);
+  const [syncProblemRecords, setSyncProblemRecords] = useState<Evidence[]>([]);
   const [syncRunning, setSyncRunning] = useState(false);
   const [retryingEvidenceId, setRetryingEvidenceId] = useState<number | null>(null);
 
@@ -367,16 +379,53 @@ export default function App() {
         storageService.getAllEvidences(),
         storageService.getAllProjects()
       ]);
+
       const evidenceSynced = allEvidences.filter(e => e.syncStatus === 'synced').length;
       const evidencePending = allEvidences.filter(e => e.syncStatus === 'pending').length;
       const evidenceFailed = allEvidences.filter(e => e.syncStatus === 'failed').length;
       const projectSynced = allProjects.filter(p => p.syncStatus === 'synced').length;
       const projectPending = allProjects.filter(p => p.syncStatus === 'pending').length;
       const projectFailed = allProjects.filter(p => p.syncStatus === 'failed').length;
+
       const dates = [
         ...allEvidences.map(e => e.lastSyncedAt).filter(Boolean),
         ...allProjects.map(p => p.lastSyncedAt).filter(Boolean)
       ].map(d => new Date(d as any)).filter(d => !Number.isNaN(d.getTime()));
+
+      const details = allProjects.map(project => {
+        const projectEvidences = allEvidences.filter(e => e.projectId === project.id);
+        const synced = projectEvidences.filter(e => e.syncStatus === 'synced').length;
+        const pending = projectEvidences.filter(e => e.syncStatus === 'pending').length;
+        const failed = projectEvidences.filter(e => e.syncStatus === 'failed').length;
+        const projectDates = [
+          project.lastSyncedAt,
+          ...projectEvidences.map(e => e.lastSyncedAt)
+        ]
+          .filter(Boolean)
+          .map(d => new Date(d as any))
+          .filter(d => !Number.isNaN(d.getTime()));
+
+        const status: 'synced' | 'pending' | 'failed' =
+          failed > 0 ? 'failed' : pending > 0 ? 'pending' : 'synced';
+
+        return {
+          id: project.id!,
+          name: project.name || 'Proyecto sin nombre',
+          client: project.client || 'Sin cliente',
+          status,
+          total: projectEvidences.length,
+          synced,
+          pending,
+          failed,
+          lastSyncedAt: projectDates.length
+            ? new Date(Math.max(...projectDates.map(d => d.getTime())))
+            : null
+        };
+      }).sort((a, b) => {
+        const priority = { failed: 0, pending: 1, synced: 2 };
+        return priority[a.status] - priority[b.status] || b.total - a.total;
+      });
+
       setSyncSummary({
         total: allEvidences.length,
         synced: evidenceSynced,
@@ -387,6 +436,8 @@ export default function App() {
         projectsFailed: projectFailed,
         lastSyncedAt: dates.length ? new Date(Math.max(...dates.map(d => d.getTime()))) : null
       });
+      setSyncProjectDetails(details);
+      setSyncProblemRecords(allEvidences.filter(e => e.syncStatus === 'pending' || e.syncStatus === 'failed'));
     } catch (error) {
       console.warn('[Sync UI] No se pudo actualizar el resumen:', error);
     }
@@ -1732,12 +1783,75 @@ export default function App() {
               <div className="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm">
                 <p className="text-[9px] font-black uppercase tracking-widest text-gray-400 mb-2">Última sincronización</p>
                 <p className="text-sm font-black text-gray-950">{syncSummary.lastSyncedAt ? syncSummary.lastSyncedAt.toLocaleString('es-CR', { dateStyle: 'short', timeStyle: 'short' }) : 'Aún no hay registros sincronizados'}</p>
-                <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mt-2">Proyectos: {syncSummary.projectsSynced} sincronizados · {syncSummary.projectsPending} pendientes · {syncSummary.projectsFailed} con error</p>
+                <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400 mt-2">Proyectos: {syncProjectDetails.length} · {syncSummary.projectsSynced} sincronizados · {syncSummary.projectsPending} pendientes · {syncSummary.projectsFailed} con error</p>
               </div>
+
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500">Detalle por proyecto</h3>
+                  <p className="text-[10px] text-gray-400 mt-1">Consulta qué proyecto está sincronizado y cuántos registros faltan.</p>
+                </div>
+                {syncProjectDetails.length === 0 ? (
+                  <div className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm text-center">
+                    <p className="text-xs font-bold text-gray-400">No hay proyectos locales registrados.</p>
+                  </div>
+                ) : (
+                  syncProjectDetails.map(project => {
+                    const statusClass =
+                      project.status === 'failed'
+                        ? 'bg-red-50 text-red-600 border-red-100'
+                        : project.status === 'pending'
+                          ? 'bg-amber-50 text-amber-600 border-amber-100'
+                          : 'bg-green-50 text-green-600 border-green-100';
+                    const statusLabel =
+                      project.status === 'failed' ? 'Con error' :
+                      project.status === 'pending' ? 'Pendiente' : 'Sincronizado';
+
+                    return (
+                      <div key={project.id} className="bg-white rounded-3xl p-4 border border-gray-100 shadow-sm">
+                        <div className="flex items-start gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-black uppercase text-gray-950 truncate">{project.name}</p>
+                            <p className="text-[9px] font-bold uppercase tracking-wide text-gray-400 mt-0.5 truncate">{project.client}</p>
+                          </div>
+                          <span className={'shrink-0 px-2.5 py-1 rounded-full border text-[8px] font-black uppercase ' + statusClass}>{statusLabel}</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mt-3">
+                          <div className="rounded-xl bg-gray-50 p-2.5">
+                            <p className="text-[8px] font-black uppercase text-gray-400">Total</p>
+                            <p className="text-sm font-black text-gray-950 mt-0.5">{project.total}</p>
+                          </div>
+                          <div className="rounded-xl bg-green-50 p-2.5">
+                            <p className="text-[8px] font-black uppercase text-green-600">Listos</p>
+                            <p className="text-sm font-black text-green-700 mt-0.5">{project.synced}</p>
+                          </div>
+                          <div className={'rounded-xl p-2.5 ' + (project.failed > 0 ? 'bg-red-50' : 'bg-amber-50')}>
+                            <p className={'text-[8px] font-black uppercase ' + (project.failed > 0 ? 'text-red-600' : 'text-amber-600')}>Faltan</p>
+                            <p className={'text-sm font-black mt-0.5 ' + (project.failed > 0 ? 'text-red-700' : 'text-amber-700')}>{project.pending + project.failed}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 mt-3">
+                          <p className="text-[8px] font-bold uppercase tracking-wide text-gray-400">
+                            {project.pending > 0 ? project.pending + ' pendientes' : '0 pendientes'}
+                            {' · '}
+                            {project.failed > 0 ? project.failed + ' con error' : '0 con error'}
+                          </p>
+                          {project.lastSyncedAt && (
+                            <p className="text-[8px] text-gray-400 shrink-0">
+                              {project.lastSyncedAt.toLocaleDateString('es-CR')}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
               {(syncSummary.pending > 0 || syncSummary.failed > 0) && (
                 <div className="space-y-3">
                   <div><h3 className="text-[10px] font-black uppercase tracking-widest text-gray-500">Registros pendientes o con error</h3><p className="text-[10px] text-gray-400 mt-1">Cada registro puede reintentarse de forma individual.</p></div>
-                  {evidences.filter(ev => ev.syncStatus === 'pending' || ev.syncStatus === 'failed').map(ev => (
+                  {syncProblemRecords.map(ev => (
                     <div key={ev.id || ev.uuid} className="bg-white rounded-3xl p-4 border border-gray-100 shadow-sm">
                       <div className="flex items-start gap-3">
                         <div className={'w-9 h-9 rounded-xl flex items-center justify-center ' + (ev.syncStatus === 'failed' ? 'bg-red-50 text-red-500' : 'bg-amber-50 text-amber-500')}>

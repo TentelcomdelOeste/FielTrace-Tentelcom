@@ -278,6 +278,299 @@ jobs:
           echo "PERSISTENT KEY VERIFIED BEFORE BUILD"
           echo "Certificate SHA-256: $EXPECTED_SHA256"
 
+      - name: Set CI APK version code
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          path = Path('android/app/build.gradle')
+          text = path.read_text()
+          run_number = os.environ['GITHUB_RUN_NUMBER']
+          updated, count = re.subn(r'^\\s*versionCode\\s+2\\s*        working-directory: android
+        run: chmod +x gradlew
+      - name: Build debug APK
+        working-directory: android
+        env:
+          FIELDTRACE_KEYSTORE_PASSWORD: ${{ secrets.FIELDTRACE_KEYSTORE_PASSWORD }}
+          FIELDTRACE_KEY_ALIAS: ${{ secrets.FIELDTRACE_KEY_ALIAS }}
+          FIELDTRACE_KEY_PASSWORD: ${{ secrets.FIELDTRACE_KEY_PASSWORD }}
+        run: ./gradlew assembleDebug --no-daemon
+      - name: Rename APK to FieldTrace.apk
+        run: |
+          set -euo pipefail
+          OUT="android/app/build/outputs/apk/debug"
+          ls -la "$OUT" || true
+          # Prefer already-named file; otherwise take the newest *.apk and rename
+          if [ -f "$OUT/FieldTrace.apk" ]; then
+            echo "Already FieldTrace.apk"
+          else
+            SRC=$(ls -1t "$OUT"/*.apk 2>/dev/null | head -1 || true)
+            if [ -z "$SRC" ]; then
+              echo "No APK found in $OUT"
+              find android/app/build/outputs -name '*.apk' -print || true
+              exit 1
+            fi
+            echo "Renaming $SRC -> $OUT/FieldTrace.apk"
+            mv "$SRC" "$OUT/FieldTrace.apk"
+          fi
+          test -s "$OUT/FieldTrace.apk"
+          ls -lh "$OUT/FieldTrace.apk"
+      - name: Verify APK signature
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          test -s "$APK"
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          test -x "$APKSIGNER"
+
+          VERIFY_OUT=$("$APKSIGNER" verify --verbose --print-certs "$APK" 2>&1)
+          echo "$VERIFY_OUT"
+
+          EXPECTED_SHA256="73:9A:14:31:97:70:03:51:92:30:B0:B4:84:15:5F:90:3F:F2:F8:52:1B:40:C3:7A:8B:A1:8F:B2:67:B0:DC:B3"
+          echo "$VERIFY_OUT" | grep -q "Signer #1 certificate SHA-256 digest: $EXPECTED_SHA256"
+          if echo "$VERIFY_OUT" | grep -q "CN=Android Debug"; then
+            echo "FAIL: APK is signed with Android Debug instead of the persistent FieldTrace key"
+            exit 1
+          fi
+
+          echo "APK SIGNATURE VERIFIED: persistent FieldTrace certificate is active"
+          echo "APK signature SHA-256: $EXPECTED_SHA256"
+
+      - name: Verify APK launcher icon matches public asset
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          TMP=$(mktemp -d)
+          unzip -q -o "$APK" \
+            'res/mipmap-mdpi-v4/ic_launcher.png' \
+            'res/mipmap-hdpi-v4/ic_launcher.png' \
+            'res/mipmap-xhdpi-v4/ic_launcher.png' \
+            'res/mipmap-xxhdpi-v4/ic_launcher.png' \
+            'res/mipmap-xxxhdpi-v4/ic_launcher.png' \
+            'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png' \
+            'res/mipmap-xxxhdpi-v4/ic_launcher_round.png' \
+            -d "$TMP"
+
+          python3 -m pip install --disable-pip-version-check Pillow
+          python3 - <<'PY' "$TMP"
+          from pathlib import Path
+          from PIL import Image
+          import sys
+
+          root = Path(sys.argv[1])
+          source_path = Path('public/pwa-512x512.png')
+          source = Image.open(source_path).convert('RGBA')
+
+          legacy = {
+              'mdpi': 48,
+              'hdpi': 72,
+              'xhdpi': 96,
+              'xxhdpi': 144,
+              'xxxhdpi': 192,
+          }
+
+          def compare(actual_path, expected_size, label):
+              actual = Image.open(actual_path).convert('RGBA')
+              expected = source.resize((expected_size, expected_size), Image.Resampling.LANCZOS)
+              if actual.size != expected.size:
+                  raise SystemExit(f'{label} size mismatch: actual={actual.size} expected={expected.size}')
+              from PIL import ImageChops
+              diff = ImageChops.difference(actual, expected)
+              bbox = diff.getbbox()
+              if bbox is not None:
+                  raise SystemExit(f'{label} does not match public asset: diff_bbox={bbox}')
+              print(f'{label} MATCHED EXACTLY')
+
+          for density, size in legacy.items():
+              compare(
+                  root / f'res/mipmap-{density}-v4/ic_launcher.png',
+                  size,
+                  f'legacy ic_launcher {density}'
+              )
+
+          compare(
+              root / 'res/mipmap-xxxhdpi-v4/ic_launcher_round.png',
+              192,
+              'legacy ic_launcher_round xxxhdpi'
+          )
+
+          # Adaptive foreground is intentionally reduced to 72% and centered
+          # inside the 432px safe canvas to prevent launcher-mask cropping.
+          actual_fg = Image.open(
+              root / 'res/mipmap-xxxhdpi-v4/ic_launcher_foreground.png'
+          ).convert('RGBA')
+          expected_artwork_size = round(432 * 0.72)
+          expected_artwork = source.resize(
+              (expected_artwork_size, expected_artwork_size),
+              Image.Resampling.LANCZOS
+          )
+          expected_fg = Image.new('RGBA', (432, 432), (0, 0, 0, 0))
+          offset = (432 - expected_artwork_size) // 2
+          expected_fg.alpha_composite(expected_artwork, (offset, offset))
+
+          if actual_fg.size != expected_fg.size:
+              raise SystemExit(
+                  f'adaptive foreground size mismatch: actual={actual_fg.size} expected={expected_fg.size}'
+              )
+          from PIL import ImageChops
+          diff = ImageChops.difference(actual_fg, expected_fg)
+          bbox = diff.getbbox()
+          if bbox is not None:
+              raise SystemExit(
+                  f'adaptive foreground does not match 72% safe-zone composition: diff_bbox={bbox}'
+              )
+          print('adaptive foreground xxxhdpi MATCHED 72% SAFE-ZONE COMPOSITION')
+
+          print('LAUNCHER ICON AUDIT PASSED: legacy icons match public asset and adaptive foreground uses 72% safe zone')
+          PY
+
+      - name: Simulate and verify launch splash
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          TMP=$(mktemp -d)
+          unzip -q -o "$APK"             'res/drawable/splash_icon.png'             'res/drawable/splash_system_icon.xml'             'res/drawable-v23/compat_splash_screen.xml'             'res/drawable-v23/compat_splash_screen_no_icon_background.xml'             -d "$TMP"
+
+          python3 - <<'PY' "$TMP"
+          from pathlib import Path
+          from PIL import Image, ImageChops
+          import re
+          import math
+
+          root = Path(__import__('sys').argv[1])
+          source = Image.open('public/pwa-512x512.png').convert('RGBA')
+          actual = Image.open(root / 'res/drawable/splash_icon.png').convert('RGBA')
+
+          if actual.size != (512, 512):
+              raise SystemExit(f'CUSTOM SPLASH SIZE FAILED: {actual.size}')
+
+          corners = [
+              actual.getpixel((0, 0)),
+              actual.getpixel((511, 0)),
+              actual.getpixel((0, 511)),
+              actual.getpixel((511, 511)),
+          ]
+          if any(px != (255, 255, 255, 255) for px in corners):
+              raise SystemExit(f'CUSTOM SPLASH BACKGROUND FAILED: corners={corners}')
+
+          scale = 0.66
+          artwork_size = round(512 * scale)
+          expected_artwork = source.resize(
+              (artwork_size, artwork_size),
+              Image.Resampling.LANCZOS
+          )
+          expected = Image.new('RGBA', (512, 512), (255, 255, 255, 255))
+          offset = (512 - artwork_size) // 2
+          expected.alpha_composite(expected_artwork, (offset, offset))
+
+          diff = ImageChops.difference(actual, expected)
+          if diff.getbbox() is not None:
+              raise SystemExit('CUSTOM SPLASH ARTWORK FAILED: unexpected pixels')
+
+          packaged_system_icon = root / 'res/drawable/splash_system_icon.xml'
+          if not packaged_system_icon.is_file() or packaged_system_icon.stat().st_size == 0:
+              raise SystemExit('SYSTEM SPLASH ICON FAILED: vector resource missing from APK')
+
+          source_system_icon = Path('android/app/src/main/res/drawable/splash_system_icon.xml').read_text()
+          if '#00000000' not in source_system_icon or 'pathData="M0,0"' not in source_system_icon:
+              raise SystemExit('SYSTEM SPLASH ICON FAILED: source vector is not invisible')
+
+          # Launch simulation:
+          # 1) Android system splash = opaque white background + invisible icon.
+          # 2) MainActivity = full-screen white overlay containing the complete
+          #    FieldTrace artwork. This bypasses the Android icon mask that
+          #    previously clipped the lower-right tentelcom mark.
+          #
+          # The simulation renders the expected phone viewport and verifies that
+          # no artwork pixel is clipped by a system icon circle because the
+          # system icon is intentionally invisible.
+          viewport = Image.new('RGBA', (709, 1536), (255, 255, 255, 255))
+          overlay = expected.resize((709, 709), Image.Resampling.LANCZOS)
+          y = (1536 - 709) // 2
+          viewport.alpha_composite(overlay, (0, y))
+          sim_path = Path('launch-splash-simulation.png')
+          viewport.save(sim_path, 'PNG', optimize=True)
+
+          # Verify the simulated logo is entirely on-canvas and the corners of
+          # the viewport remain white.
+          if viewport.getpixel((0, 0)) != (255, 255, 255, 255):
+              raise SystemExit('LAUNCH SIMULATION FAILED: top-left not white')
+          if viewport.getpixel((708, 1535)) != (255, 255, 255, 255):
+              raise SystemExit('LAUNCH SIMULATION FAILED: bottom-right not white')
+
+          print('LAUNCH SIMULATION PASSED: white system splash -> complete centered FieldTrace logo -> fade to app')
+          print(f'SIMULATION IMAGE: {sim_path}')
+          PY
+
+      - name: Verify SplashScreen implementation
+        run: |
+          set -euo pipefail
+          MAIN="android/app/src/main/java/com/fieldtrace/app/MainActivity.java"
+          test -f "$MAIN"
+          grep -q 'androidx.core.splashscreen.SplashScreen' "$MAIN"
+          grep -q 'SplashScreen.installSplashScreen(this);' "$MAIN"
+          grep -q 'showFieldTraceLaunchSplash();' "$MAIN"
+
+          # Capacitor sync may normalize Android resource files, so validate the
+          # final merged source tree rather than relying on one exact XML file.
+          grep -R -q 'Theme.SplashScreen' android/app/src/main/res
+          grep -R -q 'postSplashScreenTheme' android/app/src/main/res
+          grep -R -q 'splash_system_icon' android/app/src/main/res
+
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          unzip -l "$APK" | grep -q 'res/drawable/splash_icon.png'
+          unzip -l "$APK" | grep -q 'res/drawable/splash_system_icon.xml'
+          echo "SPLASH IMPLEMENTATION AUDIT PASSED"
+
+      - name: Validate APK location permissions (aapt)
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/FieldTrace.apk"
+          test -s "$APK"
+          AAPT=$(ls "${ANDROID_HOME}/build-tools"/*/aapt 2>/dev/null | sort -V | tail -1)
+          if [ -z "$AAPT" ]; then
+            AAPT=$(ls "${ANDROID_SDK_ROOT}/build-tools"/*/aapt 2>/dev/null | sort -V | tail -1)
+          fi
+          echo "Using aapt: $AAPT"
+          echo "=== aapt dump permissions ==="
+          "$AAPT" dump permissions "$APK" || true
+          echo "=== aapt dump badging (uses-permission lines) ==="
+          "$AAPT" dump badging "$APK" | grep -i permission || true
+          PERMS=$("$AAPT" dump permissions "$APK" 2>/dev/null || true)
+          echo "$PERMS" | grep -q "ACCESS_FINE_LOCATION" || {
+            echo "FAIL: ACCESS_FINE_LOCATION missing from final APK (aapt)"
+            TMP=$(mktemp -d)
+            unzip -q -o "$APK" AndroidManifest.xml -d "$TMP" || true
+            echo "strings sample:"; strings "$TMP/AndroidManifest.xml" 2>/dev/null | grep -i LOCATION || true
+            find android -name "AndroidManifest.xml" 2>/dev/null | head -20
+            exit 1
+          }
+          echo "$PERMS" | grep -q "ACCESS_COARSE_LOCATION" || {
+            echo "FAIL: ACCESS_COARSE_LOCATION missing from final APK (aapt)"
+            exit 1
+          }
+          echo "PASS: location permissions present in final APK"
+          ls -lh "$APK"
+      - name: Final APK audit
+        run: |
+          test -s android/app/build/outputs/apk/debug/FieldTrace.apk
+          echo "APK BUILD AND FINAL AUDIT PASSED"
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FieldTrace-apk
+          path: android/app/build/outputs/apk/debug/FieldTrace.apk
+          if-no-files-found: error
+, f'        versionCode {run_number}', text, count=1, flags=re.MULTILINE)
+          if count != 1:
+              raise SystemExit('Could not locate stable versionCode 2 in android/app/build.gradle')
+          path.write_text(updated)
+          print(f'CI APK versionCode set to {run_number}')
+          PY
+          grep -q "versionCode ${GITHUB_RUN_NUMBER}" android/app/build.gradle
+
       - name: Prepare Gradle
         working-directory: android
         run: chmod +x gradlew

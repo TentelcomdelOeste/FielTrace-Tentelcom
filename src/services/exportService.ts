@@ -8,7 +8,12 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
 
-async function handleNativeExport(fileName: string, data: any, type: 'blob' | 'string' = 'blob') {
+async function handleNativeExport(
+  fileName: string,
+  data: any,
+  type: 'blob' | 'string' = 'blob',
+  shareAfterSave = true
+) {
   if (!Capacitor.isNativePlatform()) return false;
 
   try {
@@ -23,17 +28,19 @@ async function handleNativeExport(fileName: string, data: any, type: 'blob' | 's
     }
 
     const { uri } = await Filesystem.writeFile({
-      path: fileName,
+      path: 'FieldTrace/' + fileName,
       data: base64Data,
       directory: Directory.Documents,
       recursive: true
     });
 
-    await Share.share({
-      title: fileName,
-      url: uri,
-      dialogTitle: 'Compartir reporte'
-    });
+    if (shareAfterSave) {
+      await Share.share({
+        title: fileName,
+        url: uri,
+        dialogTitle: 'Compartir reporte'
+      });
+    }
     return true;
   } catch (e) {
     console.error('Export Native Error', e);
@@ -354,7 +361,7 @@ export const exportService = {
 
     if (Capacitor.isNativePlatform()) {
       const pdfBase64 = doc.output('datauristring').split(',')[1];
-      await handleNativeExport(fileName, pdfBase64, 'string');
+      await handleNativeExport(fileName, pdfBase64, 'string', false);
     } else {
       doc.save(fileName);
     }

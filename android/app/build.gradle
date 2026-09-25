@@ -7,7 +7,7 @@ android {
         applicationId "com.fieldtrace.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        versionCode (project.findProperty("versionCode") ?: "2").toInteger()
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -16,10 +16,24 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+
+    signingConfigs {
+        fieldTrace {
+            storeFile file("fieldtrace-signing.jks")
+            storePassword System.getenv("FIELDTRACE_KEYSTORE_PASSWORD")
+            keyAlias System.getenv("FIELDTRACE_KEY_ALIAS")
+            keyPassword System.getenv("FIELDTRACE_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig signingConfigs.fieldTrace
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.fieldTrace
         }
     }
 

@@ -57,7 +57,11 @@ export const firebaseService = {
         return false;
       }
 
-      await ensureAuthenticated();
+      const uid = await ensureAuthenticated();
+      if (!uid) {
+        console.warn('[Firebase] No fue posible autenticar la sesión anónima.');
+        return false;
+      }
 
       const evidenceUuid = evidence.uuid || `ev_${Date.now()}`;
       const projectId = evidence.projectId || 'default_project';
@@ -105,7 +109,11 @@ export const firebaseService = {
   async syncProjectToCloud(project: any): Promise<boolean> {
     try {
       if (!navigator.onLine) return false;
-      await ensureAuthenticated();
+      const uid = await ensureAuthenticated();
+      if (!uid) {
+        console.warn('[Firebase] No fue posible autenticar la sesión anónima.');
+        return false;
+      }
 
       const projectUuid = project.uuid || `proj_${Date.now()}`;
       const docRef = doc(db, 'projects', String(project.id || projectUuid));

@@ -36,7 +36,9 @@ import {
   Pencil,
   Zap,
   ZapOff,
-  ZoomIn
+  ZoomIn,
+  Video,
+  Square
 } from 'lucide-react';
 import { AutoResizingTextarea } from './components/AutoResizingTextarea';
 import { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
@@ -253,6 +255,9 @@ export default function App() {
   const [cameraZoom, setCameraZoom] = useState(1);
   const [flashMode, setFlashMode] = useState<'off' | 'on'>('off');
   const [cameraFacing, setCameraFacing] = useState<'rear' | 'front'>('rear');
+  const [isRecordingVideo, setIsRecordingVideo] = useState(false);
+  const [videoProcessing, setVideoProcessing] = useState(false);
+  const videoStartedAtRef = useRef<number | null>(null);
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
@@ -334,7 +339,7 @@ export default function App() {
 
     (async () => {
       try {
-        await CameraPreview.start({ position: cameraFacing, toBack: true, aspectRatio: 'fill', aspectMode: 'cover', storeToFile: false, disableAudio: true, initialZoomLevel: 1, rotateWhenOrientationChanged: true });
+        await CameraPreview.start({ position: cameraFacing, toBack: true, aspectRatio: 'fill', aspectMode: 'cover', storeToFile: false, disableAudio: true, enableVideoMode: true, videoQuality: '1080p', videoCodec: 'avc1', initialZoomLevel: 1, rotateWhenOrientationChanged: true });
         if (!active) return;
         await CameraPreview.setZoom({ level: cameraZoom });
         await ensureFlashArmed(flashMode);
@@ -722,6 +727,56 @@ export default function App() {
     }
   };
 
+  const buildVideoOverlayConfig = () => {
+    if (!selectedProject) return null;
+    const { gps: stateGps, locationData, isLive, diagnostic } = locationService.getCurrentState();
+    const locationOff = diagnostic?.status === 'location_disabled' || diagnostic?.locationServicesEnabled === false;
+    const activeGps = locationOff ? null : stateGps;
+    const hasGps = !!(activeGps && activeGps.lat != null && activeGps.lon != null);
+    const isActualLive = !!(hasGps && (activeGps!.source === 'live' || isLive));
+    const gpsLabel = locationOff
+      ? 'SIN GPS (GPS DESACTIVADO)'
+      : hasGps
+        ? (isActualLive ? `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)}` : `${activeGps!.lat.toFixed(6)}, ${activeGps!.lon.toFixed(6)} (CACHÉ)`)
+        : 'SIN GPS';
+    const currentFormattedLocation = getFormattedLocationText(locationData, selectedProject);
+    return { projectName: selectedProject.name, capturedAtMs: videoStartedAtRef.current || Date.now(),
+      showDateTime: selectedProject.showDateTime, dateTimeFormat: selectedProject.dateTimeFormat, showGps: selectedProject.showGps,
+      showLocation: selectedProject.showLocation, showTech: selectedProject.showTech, overlayPosition: selectedProject.overlayPosition,
+      fontSizeScale: selectedProject.fontSizeScale, fontSizeValue: selectedProject.fontSizeValue, overlayColor: selectedProject.overlayColor,
+      logoImage: selectedProject.logoImage || '', logoPosition: selectedProject.logoPosition, logoSize: selectedProject.logoSize, logoOpacity: selectedProject.logoOpacity,
+      gpsLabel, ubicacion: hasGps && currentFormattedLocation && currentFormattedLocation !== 'Buscando...' ? currentFormattedLocation : '',
+      tech: selectedProject.techName || 'TECNICO', customFields: selectedProject.customFields.map(f => ({ ...f })) };
+  };
+
+  const startVideoRecording = async () => {
+    if (!selectedProject || capturingRef.current || videoProcessing) return;
+    try { capturingRef.current = true; videoStartedAtRef.current = Date.now();
+      await CameraPreview.startRecordVideo({ storeToFile: true, videoQuality: '1080p', videoCodec: 'avc1', frameRate: 30, disableAudio: true, mirrorFrontCamera: false });
+      setIsRecordingVideo(true);
+    } catch (e) { console.error('[Video] start failed', e); videoStartedAtRef.current = null; capturingRef.current = false; }
+  };
+
+  const stopVideoRecording = async () => {
+    if (!isRecordingVideo || videoProcessing) return;
+    setVideoProcessing(true);
+    try {
+      const stopped = await CameraPreview.stopRecordVideo(); setIsRecordingVideo(false);
+      const rawVideoPath = stopped?.videoFilePath; if (!rawVideoPath) throw new Error('La cámara no devolvió la ruta del video');
+      const native = (window as any).FieldTraceNative;
+      if (!native || typeof native.composeVideoWithOverlay !== 'function' || typeof native.saveVideoToGallery !== 'function') throw new Error('El compositor nativo de video no está disponible');
+      const overlayConfig = buildVideoOverlayConfig(); if (!overlayConfig) throw new Error('No hay proyecto seleccionado para el overlay');
+      const finalVideoPath = String(native.composeVideoWithOverlay(rawVideoPath, JSON.stringify(overlayConfig)) || '');
+      if (!finalVideoPath) throw new Error('No se pudo integrar el overlay al video');
+      const uuid = crypto.randomUUID ? crypto.randomUUID() : 'vid_' + Date.now() + Math.random().toString(36).slice(2);
+      const savedUri = String(native.saveVideoToGallery(finalVideoPath, `FT_${uuid}.mp4`) || '');
+      if (!savedUri) throw new Error('No se pudo guardar el video en la galería Field Trace');
+      try { await CameraPreview.deleteFile({ path: rawVideoPath }); } catch {}
+      try { await CameraPreview.deleteFile({ path: finalVideoPath }); } catch {}
+      console.log('[Video] saved with burned-in overlay:', savedUri);
+    } catch (e) { console.error('[Video] stop/process failed', e); try { if (isRecordingVideo) await CameraPreview.stopRecordVideo(); } catch {} setIsRecordingVideo(false);
+    } finally { videoStartedAtRef.current = null; capturingRef.current = false; setVideoProcessing(false); }
+  };
   const captureBatchPhoto = async () => {
     // Anti doble-tap con ref (sin spinner ni disabled en el botón)
     if (!selectedProject || capturingRef.current) return;
@@ -2062,14 +2117,17 @@ export default function App() {
               <ArrowLeft className="w-6 h-6"/>
             </button>
             
-            <button 
-              onClick={captureBatchPhoto}
-              className="w-16 h-16 bg-white rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform"
-            >
-              <div className="w-full h-full bg-white rounded-full shadow-inner flex items-center justify-center">
-                 <div className="w-10 h-10 border-4 border-gray-100 rounded-full"></div>
-              </div>
-            </button>
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())} disabled={videoProcessing}
+                className={`w-16 h-16 rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform flex items-center justify-center ${isRecordingVideo ? 'bg-red-600' : 'bg-white'}`}
+                title={isRecordingVideo ? 'Detener video' : 'Grabar video con overlay'} aria-label={isRecordingVideo ? 'Detener video' : 'Grabar video con overlay'}>
+                {isRecordingVideo ? <Square className="w-6 h-6 text-white fill-white" /> : <Video className="w-7 h-7 text-black" />}
+              </button>
+              <button type="button" onClick={captureBatchPhoto} disabled={isRecordingVideo || videoProcessing}
+                className="w-16 h-16 bg-white rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform disabled:opacity-40" title="Capturar fotografía" aria-label="Capturar fotografía">
+                <div className="w-full h-full bg-white rounded-full shadow-inner flex items-center justify-center"><div className="w-10 h-10 border-4 border-gray-100 rounded-full"></div></div>
+              </button>
+            </div>
 
             <button 
               type="button"

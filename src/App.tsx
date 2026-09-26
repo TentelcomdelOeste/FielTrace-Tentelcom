@@ -2117,14 +2117,26 @@ export default function App() {
               <ArrowLeft className="w-6 h-6"/>
             </button>
             
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())} disabled={videoProcessing}
-                className={`w-16 h-16 rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform flex items-center justify-center ${isRecordingVideo ? 'bg-red-600' : 'bg-white'}`}
-                title={isRecordingVideo ? 'Detener video' : 'Grabar video con overlay'} aria-label={isRecordingVideo ? 'Detener video' : 'Grabar video con overlay'}>
-                {isRecordingVideo ? <Square className="w-6 h-6 text-white fill-white" /> : <Video className="w-7 h-7 text-black" />}
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}
+                disabled={videoProcessing}
+                className={`h-14 min-w-[92px] px-4 rounded-2xl border border-white/20 active:scale-95 transition-all flex items-center justify-center gap-2 ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500/90 text-white'} disabled:opacity-50`}
+                title={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
+                aria-label={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
+              >
+                {isRecordingVideo ? <Square className="w-5 h-5 fill-white" /> : <Video className="w-5 h-5" />}
+                <span className="text-[11px] font-black tracking-wide">{isRecordingVideo ? 'DETENER' : 'VIDEO'}</span>
               </button>
-              <button type="button" onClick={captureBatchPhoto} disabled={isRecordingVideo || videoProcessing}
-                className="w-16 h-16 bg-white rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform disabled:opacity-40" title="Capturar fotografía" aria-label="Capturar fotografía">
+              <button
+                type="button"
+                onClick={captureBatchPhoto}
+                disabled={isRecordingVideo || videoProcessing}
+                className="w-16 h-16 bg-white rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform disabled:opacity-40"
+                title="Capturar fotografía"
+                aria-label="Capturar fotografía"
+              >
                 <div className="w-full h-full bg-white rounded-full shadow-inner flex items-center justify-center"><div className="w-10 h-10 border-4 border-gray-100 rounded-full"></div></div>
               </button>
             </div>

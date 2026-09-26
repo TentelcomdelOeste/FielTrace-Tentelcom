@@ -64,6 +64,7 @@ public class MainActivity extends BridgeActivity {
     super.onCreate(savedInstanceState);
     showFieldTraceLaunchSplash();
     applyCameraWebViewFixes();
+    refreshNativeWebAssetsIfVersionChanged();
   }
 
   @Override
@@ -127,6 +128,37 @@ public class MainActivity extends BridgeActivity {
           try { decor.removeView(overlay); } catch (Exception ignored2) {}
         }
       }, 650L);
+    } catch (Exception ignored) {}
+  }
+
+  private void refreshNativeWebAssetsIfVersionChanged() {
+    try {
+      android.content.SharedPreferences prefs = getSharedPreferences("fieldtrace_native_cache", MODE_PRIVATE);
+      int currentVersion = com.fieldtrace.app.BuildConfig.VERSION_CODE;
+      int storedVersion = prefs.getInt("web_asset_version", -1);
+      if (storedVersion == currentVersion) return;
+
+      if (this.bridge != null && this.bridge.getWebView() != null) {
+        WebView webView = this.bridge.getWebView();
+        webView.clearCache(true);
+        webView.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
+        webView.postDelayed(() -> {
+          try {
+            webView.evaluateJavascript(
+                "(async()=>{try{if('serviceWorker' in navigator){const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()));}if(window.caches){const ks=await caches.keys();await Promise.all(ks.map(k=>caches.delete(k)));}}catch(e){console.warn('[FieldTrace] cache refresh',e)}})()",
+                value -> {
+                  try {
+                    webView.reload();
+                  } catch (Exception ignored) {}
+                }
+            );
+          } catch (Exception ignored) {
+            try { webView.reload(); } catch (Exception ignored2) {}
+          }
+        }, 350L);
+      }
+
+      prefs.edit().putInt("web_asset_version", currentVersion).apply();
     } catch (Exception ignored) {}
   }
 

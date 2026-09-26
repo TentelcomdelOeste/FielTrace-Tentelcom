@@ -469,7 +469,10 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception e) { error[0] = String.valueOf(e.getMessage()); latch.countDown(); }
       };
       try {
-        new Handler(Looper.getMainLooper()).post(work);
+        // Never post the transformation work to the WebView/main thread and then
+        // wait here: that would deadlock the JS bridge while Media3 is running.
+        Thread worker = new Thread(work, "FieldTraceVideoOverlay");
+        worker.start();
         if (!latch.await(180, TimeUnit.SECONDS)) error[0] = "VIDEO_TRANSFORM_TIMEOUT";
       } catch (InterruptedException e) { Thread.currentThread().interrupt(); error[0] = "VIDEO_TRANSFORM_INTERRUPTED"; }
       if (result[0].isEmpty() || !new File(result[0]).isFile()) {

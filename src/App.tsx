@@ -789,12 +789,20 @@ export default function App() {
 
       const quality = (['1080p', 'high', '720p', 'medium', '480p', 'low'] as string[])
         .find(q => qualities.length === 0 || qualities.includes(q)) || 'high';
-      const codec = codecs.length === 0 || codecs.includes('avc1') ? 'avc1' : codecs[0];
+      // H.264/AVC is intentionally forced because the burned-in overlay is
+      // transcoded through Media3 to H.264 for maximum Android compatibility.
+      // The plugin documents avc1 as a supported Android video codec.
+      const codec = 'avc1';
       const frameRate = frameRates.length === 0
         ? 30
         : (frameRates.includes(30) ? 30 : [...frameRates].sort((a, b) => Math.abs(a - 30) - Math.abs(b - 30))[0]);
 
       console.log('[Video] native capabilities', { qualities, codecs, frameRates, selected: { quality, codec, frameRate } });
+
+      // Explicitly set the codec on the active session before recording.
+      await CameraPreview.setVideoCodec({ codec: 'avc1' }).catch((error) => {
+        console.warn('[Video] setVideoCodec(avc1) fallback:', error);
+      });
 
       await CameraPreview.startRecordVideo({
         storeToFile: true,
@@ -807,6 +815,8 @@ export default function App() {
         mirrorFrontCamera: false,
       });
 
+      const actualCodec = await CameraPreview.getVideoCodec().catch(() => ({ codec: codec }));
+      console.log('[Video] recording codec:', actualCodec);
       setIsRecordingVideo(true);
       console.log('[Video] native recording STARTED');
     } catch (e) {

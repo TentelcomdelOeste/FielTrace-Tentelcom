@@ -361,9 +361,27 @@ export const exportService = {
 
     if (Capacitor.isNativePlatform()) {
       const pdfBase64 = doc.output('datauristring').split(',')[1];
-      await handleNativeExport(fileName, pdfBase64, 'string', false);
+      const native = (window as any).FieldTraceNative;
+
+      // Android: write the PDF directly to the public Downloads/Field Trace
+      // folder so it is immediately visible in the device file manager.
+      if (native && typeof native.savePdfToDownloads === 'function') {
+        const savedUri = String(native.savePdfToDownloads(pdfBase64, fileName) || '');
+        if (!savedUri) {
+          throw new Error('No se pudo guardar el PDF en Descargas/Field Trace');
+        }
+        console.log('[PDF] saved:', savedUri);
+        return savedUri;
+      }
+
+      const saved = await handleNativeExport(fileName, pdfBase64, 'string', false);
+      if (!saved) {
+        throw new Error('No se pudo guardar el PDF en el dispositivo');
+      }
+      return true;
     } else {
       doc.save(fileName);
+      return true;
     }
   }
 };

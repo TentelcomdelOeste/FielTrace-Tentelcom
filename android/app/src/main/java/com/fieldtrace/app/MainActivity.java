@@ -498,7 +498,14 @@ public class MainActivity extends BridgeActivity {
         info.put("path", file.getAbsolutePath());
         return info.toString();
       } catch (Exception e) {
-        return "{\"exists\":false,\"error\":\"" + JSONObject.quote(String.valueOf(e.getMessage())) + "}";
+        try {
+          JSONObject error = new JSONObject();
+          error.put("exists", false);
+          error.put("error", String.valueOf(e.getMessage()));
+          return error.toString();
+        } catch (Exception ignored) {
+          return "{\"exists\":false}";
+        }
       }
     }
 

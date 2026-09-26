@@ -259,6 +259,24 @@ export default function App() {
   const [videoProcessing, setVideoProcessing] = useState(false);
   const videoStartedAtRef = useRef<number | null>(null);
   const videoRecordingPathRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let listenerHandle: { remove: () => Promise<void> } | null = null;
+    void CameraPreview.addListener('recordingFinished', (event: { videoFilePath?: string; reason?: string }) => {
+      if (event?.videoFilePath) {
+        videoRecordingPathRef.current = event.videoFilePath;
+        console.log('[Video] recordingFinished:', event.videoFilePath, event.reason || 'manual');
+      }
+    }).then(handle => {
+      listenerHandle = handle;
+    }).catch(error => {
+      console.warn('[Video] recordingFinished listener unavailable:', error);
+    });
+    return () => {
+      if (listenerHandle) void listenerHandle.remove().catch(() => {});
+    };
+  }, []);
+
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
@@ -805,23 +823,38 @@ export default function App() {
     setIsRecordingVideo(false);
 
     let rawVideoPath = '';
+    let rawSavedUri = '';
     try {
       const stopped = await CameraPreview.stopRecordVideo();
       rawVideoPath = String(stopped?.videoFilePath || videoRecordingPathRef.current || '');
-      if (!rawVideoPath) throw new Error('La cámara no devolvió la ruta del video');
+      if (!rawVideoPath) throw new Error('La cámara terminó pero no devolvió la ruta del video');
 
       const native = (window as any).FieldTraceNative;
-      if (!native || typeof native.composeVideoWithOverlay !== 'function' || typeof native.saveVideoToGallery !== 'function') {
-        throw new Error('El compositor nativo de video no está disponible');
+      if (!native || typeof native.saveVideoToGallery !== 'function') {
+        throw new Error('El guardado nativo de video no está disponible');
       }
+
+      // IMPORTANT: persist the real camera output BEFORE attempting overlay composition.
+      // The raw MP4 is kept until the final overlay MP4 has been successfully saved.
+      const rawUuid = crypto.randomUUID ? crypto.randomUUID() : 'raw_' + Date.now() + Math.random().toString(36).slice(2);
+      rawSavedUri = String(native.saveVideoToGallery(rawVideoPath, `FT_RAW_${rawUuid}.mp4`) || '');
+      if (!rawSavedUri) {
+        throw new Error('La cámara devolvió una ruta, pero no se pudo guardar el MP4 original');
+      }
+      console.log('[Video] RAW MP4 saved:', rawSavedUri);
 
       if (typeof native.getVideoFileInfo === 'function') {
         const infoRaw = String(native.getVideoFileInfo(rawVideoPath) || '');
         const info = infoRaw ? JSON.parse(infoRaw) : null;
         if (!info?.exists || Number(info.size || 0) <= 0) {
-          throw new Error('La cámara terminó pero el archivo de video está vacío o no existe');
+          throw new Error('El archivo original de video está vacío');
         }
-        console.log('[Video] raw file verified', info);
+        console.log('[Video] raw file verified:', info);
+      }
+
+      if (typeof native.composeVideoWithOverlay !== 'function') {
+        console.warn('[Video] compositor no disponible; se conserva el MP4 original');
+        return;
       }
 
       const overlayConfig = buildVideoOverlayConfig();
@@ -829,26 +862,37 @@ export default function App() {
 
       console.log('[Video] composing overlay...');
       const finalVideoPath = String(native.composeVideoWithOverlay(rawVideoPath, JSON.stringify(overlayConfig)) || '');
-      if (!finalVideoPath) throw new Error('No se pudo integrar el overlay al video');
+      if (!finalVideoPath) {
+        console.warn('[Video] overlay failed; RAW MP4 remains available:', rawSavedUri);
+        return;
+      }
 
       if (typeof native.getVideoFileInfo === 'function') {
         const finalInfoRaw = String(native.getVideoFileInfo(finalVideoPath) || '');
         const finalInfo = finalInfoRaw ? JSON.parse(finalInfoRaw) : null;
         if (!finalInfo?.exists || Number(finalInfo.size || 0) <= 0) {
-          throw new Error('El video con overlay quedó vacío o no existe');
+          console.warn('[Video] overlay output invalid; RAW MP4 remains available:', rawSavedUri);
+          return;
         }
-        console.log('[Video] overlay file verified', finalInfo);
+        console.log('[Video] overlay file verified:', finalInfo);
       }
 
       const uuid = crypto.randomUUID ? crypto.randomUUID() : 'vid_' + Date.now() + Math.random().toString(36).slice(2);
       const savedUri = String(native.saveVideoToGallery(finalVideoPath, `FT_${uuid}.mp4`) || '');
-      if (!savedUri) throw new Error('No se pudo guardar el video en la galería Field Trace');
+      if (!savedUri) {
+        console.warn('[Video] final overlay could not be saved; RAW MP4 remains available:', rawSavedUri);
+        return;
+      }
 
       try { await CameraPreview.deleteFile({ path: rawVideoPath }); } catch {}
       try { await CameraPreview.deleteFile({ path: finalVideoPath }); } catch {}
-      console.log('[Video] SAVED WITH BURNED-IN OVERLAY:', savedUri);
+      console.log('[Video] FINAL MP4 saved with burned-in overlay:', savedUri);
     } catch (e) {
-      console.error('[Video] stop/process failed', e);
+      console.error('[Video] stop/process failed:', e);
+      // Never delete the raw recording after a processing failure.
+      if (rawSavedUri) {
+        console.warn('[Video] RAW MP4 preserved after failure:', rawSavedUri);
+      }
       try { await CameraPreview.stopRecordVideo(); } catch {}
     } finally {
       videoStartedAtRef.current = null;
@@ -857,6 +901,7 @@ export default function App() {
       setVideoProcessing(false);
     }
   };
+
   const captureBatchPhoto = async () => {
     // Anti doble-tap con ref (sin spinner ni disabled en el botón)
     if (!selectedProject || capturingRef.current) return;

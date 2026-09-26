@@ -301,9 +301,11 @@ jobs:
           path = Path('android/app/build.gradle')
           text = path.read_text()
           run_number = os.environ['GITHUB_RUN_NUMBER']
-          if 'versionCode 2' not in text:
-              raise SystemExit('Could not locate stable versionCode 2 in android/app/build.gradle')
-          text = text.replace('versionCode 2', f'versionCode {run_number}', 1)
+          import re
+          match = re.search(r'versionCode\s+\d+', text)
+          if not match:
+              raise SystemExit('Could not locate versionCode in android/app/build.gradle')
+          text = text[:match.start()] + f'versionCode {run_number}' + text[match.end():]
           path.write_text(text)
           print(f'CI APK versionCode set to {run_number}')
           PY

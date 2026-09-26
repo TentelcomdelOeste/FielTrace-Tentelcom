@@ -442,8 +442,11 @@ public class MainActivity extends BridgeActivity {
     @JavascriptInterface
     public String composeVideoWithOverlay(String inputPath, String overlayJson) {
       if (inputPath == null || inputPath.trim().isEmpty()) return "";
-      final File input = new File(inputPath.trim());
-      if (!input.isFile() || input.length() == 0) return "";
+      final File input = resolveVideoFile(inputPath.trim());
+      if (input == null || !input.isFile() || input.length() == 0) {
+        android.util.Log.e("FieldTraceVideo", "Input video missing: " + inputPath);
+        return "";
+      }
       final File output = new File(getCacheDir(), "FT_overlay_" + System.currentTimeMillis() + ".mp4");
       final CountDownLatch latch = new CountDownLatch(1);
       final String[] result = new String[]{""};
@@ -484,10 +487,49 @@ public class MainActivity extends BridgeActivity {
     }
 
     @JavascriptInterface
+    public String getVideoFileInfo(String videoPath) {
+      try {
+        if (videoPath == null || videoPath.trim().isEmpty()) return "{}";
+        File file = resolveVideoFile(videoPath.trim());
+        if (file == null) return "{\"exists\":false}";
+        JSONObject info = new JSONObject();
+        info.put("exists", file.isFile() && file.length() > 0);
+        info.put("size", file.length());
+        info.put("path", file.getAbsolutePath());
+        return info.toString();
+      } catch (Exception e) {
+        try {
+          JSONObject error = new JSONObject();
+          error.put("exists", false);
+          error.put("error", String.valueOf(e.getMessage()));
+          return error.toString();
+        } catch (Exception ignored) {
+          return "{\"exists\":false}";
+        }
+      }
+    }
+
+    private File resolveVideoFile(String path) {
+      try {
+        if (path == null || path.trim().isEmpty()) return null;
+        String value = path.trim();
+        if (value.startsWith("file://")) {
+          Uri uri = Uri.parse(value);
+          String decodedPath = uri.getPath();
+          return decodedPath == null ? null : new File(decodedPath);
+        }
+        if (value.startsWith("content://")) return null;
+        return new File(value);
+      } catch (Exception e) {
+        return null;
+      }
+    }
+
+    @JavascriptInterface
     public String saveVideoToGallery(String videoPath, String fileName) {
       if (videoPath == null || videoPath.trim().isEmpty()) return "";
-      File source = new File(videoPath.trim());
-      if (!source.isFile() || source.length() == 0) return "";
+      File source = resolveVideoFile(videoPath.trim());
+      if (source == null || !source.isFile() || source.length() == 0) return "";
       String safeName = fileName == null || fileName.trim().isEmpty() ? "FT_video.mp4" : fileName.trim();
       if (!safeName.toLowerCase(Locale.US).endsWith(".mp4")) safeName += ".mp4";
       try {

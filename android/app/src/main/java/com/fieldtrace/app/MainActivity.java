@@ -44,6 +44,7 @@ import java.text.SimpleDateFormat;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.effect.CanvasOverlay;
 import androidx.media3.effect.OverlayEffect;
@@ -456,26 +457,38 @@ public class MainActivity extends BridgeActivity {
           VideoMetadataOverlay overlay = new VideoMetadataOverlay(new JSONObject(overlayJson == null ? "{}" : overlayJson));
           MediaItem item = MediaItem.fromUri(Uri.fromFile(input));
           EditedMediaItem edited = new EditedMediaItem.Builder(item)
+              .setRemoveAudio(true)
               .setEffects(new Effects(Collections.emptyList(), Collections.singletonList(
                   new OverlayEffect(Collections.singletonList(overlay)))))
               .build();
+
+          // Media3 Transformer must be accessed from one application thread.
+          // Run the Transformer lifecycle on Android's main application thread,
+          // while this JS bridge method waits on its own bridge thread.
           Transformer transformer = new Transformer.Builder(MainActivity.this)
+              .setVideoMimeType(MimeTypes.VIDEO_H264)
               .addListener(new Transformer.Listener() {
                 @Override public void onCompleted(androidx.media3.transformer.Composition c, ExportResult r) {
-                  result[0] = output.getAbsolutePath(); latch.countDown();
+                  result[0] = output.getAbsolutePath();
+                  android.util.Log.d("FieldTraceVideo", "Overlay export completed: " + result[0]);
+                  latch.countDown();
                 }
                 @Override public void onError(androidx.media3.transformer.Composition c, ExportResult r, ExportException e) {
-                  error[0] = e == null ? "VIDEO_TRANSFORM_ERROR" : String.valueOf(e.getMessage()); latch.countDown();
+                  error[0] = e == null ? "VIDEO_TRANSFORM_ERROR" : String.valueOf(e.getMessage());
+                  android.util.Log.e("FieldTraceVideo", "Overlay export error: " + error[0], e);
+                  latch.countDown();
                 }
               }).build();
           transformer.start(edited, output.getAbsolutePath());
-        } catch (Exception e) { error[0] = String.valueOf(e.getMessage()); latch.countDown(); }
+        } catch (Exception e) {
+          error[0] = String.valueOf(e.getMessage());
+          android.util.Log.e("FieldTraceVideo", "Overlay setup failed", e);
+          latch.countDown();
+        }
       };
       try {
-        // Never post the transformation work to the WebView/main thread and then
-        // wait here: that would deadlock the JS bridge while Media3 is running.
-        Thread worker = new Thread(work, "FieldTraceVideoOverlay");
-        worker.start();
+        Handler mainHandler = new Handler(Looper.getMainLooper());
+        mainHandler.post(work);
         if (!latch.await(180, TimeUnit.SECONDS)) error[0] = "VIDEO_TRANSFORM_TIMEOUT";
       } catch (InterruptedException e) { Thread.currentThread().interrupt(); error[0] = "VIDEO_TRANSFORM_INTERRUPTED"; }
       if (result[0].isEmpty() || !new File(result[0]).isFile()) {

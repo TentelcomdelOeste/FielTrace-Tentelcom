@@ -26,6 +26,33 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
+import android.content.ContentValues;
+import android.os.Build;
+import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.graphics.Paint;
+import android.graphics.Typeface;
+import android.graphics.RectF;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.util.Collections;
+import java.util.Date;
+import java.util.Locale;
+import java.text.SimpleDateFormat;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.effect.CanvasOverlay;
+import androidx.media3.effect.OverlayEffect;
+import androidx.media3.transformer.EditedMediaItem;
+import androidx.media3.transformer.Effects;
+import androidx.media3.transformer.ExportException;
+import androidx.media3.transformer.ExportResult;
+import androidx.media3.transformer.Transformer;
+
 
 public class MainActivity extends BridgeActivity {
   private static final String ALBUM_NAME = "Field Trace";
@@ -412,5 +439,128 @@ public class MainActivity extends BridgeActivity {
         startActivity(chooser);
       } catch (Exception ignored) {}
     }
+    @JavascriptInterface
+    public String composeVideoWithOverlay(String inputPath, String overlayJson) {
+      if (inputPath == null || inputPath.trim().isEmpty()) return "";
+      final File input = new File(inputPath.trim());
+      if (!input.isFile() || input.length() == 0) return "";
+      final File output = new File(getCacheDir(), "FT_overlay_" + System.currentTimeMillis() + ".mp4");
+      final CountDownLatch latch = new CountDownLatch(1);
+      final String[] result = new String[]{""};
+      final String[] error = new String[]{""};
+      Runnable work = () -> {
+        try {
+          VideoMetadataOverlay overlay = new VideoMetadataOverlay(new JSONObject(overlayJson == null ? "{}" : overlayJson));
+          MediaItem item = MediaItem.fromUri(Uri.fromFile(input));
+          EditedMediaItem edited = new EditedMediaItem.Builder(item)
+              .setEffects(new Effects(Collections.emptyList(), Collections.singletonList(
+                  new OverlayEffect(Collections.singletonList(overlay)))))
+              .build();
+          Transformer transformer = new Transformer.Builder(MainActivity.this)
+              .addListener(new Transformer.Listener() {
+                @Override public void onCompleted(androidx.media3.transformer.Composition c, ExportResult r) {
+                  result[0] = output.getAbsolutePath(); latch.countDown();
+                }
+                @Override public void onError(androidx.media3.transformer.Composition c, ExportResult r, ExportException e) {
+                  error[0] = e == null ? "VIDEO_TRANSFORM_ERROR" : String.valueOf(e.getMessage()); latch.countDown();
+                }
+              }).build();
+          transformer.start(edited, output.getAbsolutePath());
+        } catch (Exception e) { error[0] = String.valueOf(e.getMessage()); latch.countDown(); }
+      };
+      try {
+        new Handler(Looper.getMainLooper()).post(work);
+        if (!latch.await(180, TimeUnit.SECONDS)) error[0] = "VIDEO_TRANSFORM_TIMEOUT";
+      } catch (InterruptedException e) { Thread.currentThread().interrupt(); error[0] = "VIDEO_TRANSFORM_INTERRUPTED"; }
+      if (result[0].isEmpty() || !new File(result[0]).isFile()) {
+        try { if (output.exists()) output.delete(); } catch (Exception ignored) {}
+        android.util.Log.e("FieldTraceVideo", "Overlay transform failed: " + error[0]);
+        return "";
+      }
+      return result[0];
+    }
+
+    @JavascriptInterface
+    public String saveVideoToGallery(String videoPath, String fileName) {
+      if (videoPath == null || videoPath.trim().isEmpty()) return "";
+      File source = new File(videoPath.trim());
+      if (!source.isFile() || source.length() == 0) return "";
+      String safeName = fileName == null || fileName.trim().isEmpty() ? "FT_video.mp4" : fileName.trim();
+      if (!safeName.toLowerCase(Locale.US).endsWith(".mp4")) safeName += ".mp4";
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          ContentValues values = new ContentValues();
+          values.put(MediaStore.Video.Media.DISPLAY_NAME, safeName);
+          values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+          values.put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_DCIM + "/" + ALBUM_NAME + "/");
+          values.put(MediaStore.Video.Media.IS_PENDING, 1);
+          Uri uri = getContentResolver().insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+          if (uri == null) return "";
+          try (FileInputStream in = new FileInputStream(source); java.io.OutputStream out = getContentResolver().openOutputStream(uri)) {
+            if (out == null) throw new IllegalStateException("VIDEO_OUTPUT_STREAM_NULL");
+            byte[] buffer = new byte[1024 * 1024]; int read;
+            while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+            out.flush();
+          } catch (Exception copyError) {
+            try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
+            throw copyError;
+          }
+          ContentValues published = new ContentValues(); published.put(MediaStore.Video.Media.IS_PENDING, 0);
+          getContentResolver().update(uri, published, null, null);
+          return uri.toString();
+        }
+        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), ALBUM_NAME);
+        if (!dir.exists() && !dir.mkdirs()) return "";
+        File destination = new File(dir, safeName);
+        try (FileInputStream in = new FileInputStream(source); FileOutputStream out = new FileOutputStream(destination)) {
+          byte[] buffer = new byte[1024 * 1024]; int read;
+          while ((read = in.read(buffer)) != -1) out.write(buffer, 0, read);
+        }
+        Intent scan = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE); scan.setData(Uri.fromFile(destination)); sendBroadcast(scan);
+        return destination.getAbsolutePath();
+      } catch (Exception e) { android.util.Log.e("FieldTraceVideo", "Save video failed", e); return ""; }
+    }
+
   }
+
+  @UnstableApi
+  private static final class VideoMetadataOverlay extends CanvasOverlay {
+    private final JSONObject config;
+    private final Bitmap logo;
+    private final long startEpochMs;
+    VideoMetadataOverlay(JSONObject config) {
+      super(true); this.config = config == null ? new JSONObject() : config;
+      startEpochMs = this.config.optLong("capturedAtMs", System.currentTimeMillis());
+      Bitmap decoded = null; String data = this.config.optString("logoImage", "");
+      try { int comma = data.indexOf(','); if (data.startsWith("data:image") && comma > 0) { byte[] b = Base64.decode(data.substring(comma + 1), Base64.DEFAULT); decoded = BitmapFactory.decodeByteArray(b, 0, b.length); } } catch (Exception ignored) {}
+      logo = decoded;
+    }
+    @Override public void configure(androidx.media3.common.util.Size size) { super.configure(size); }
+    @Override public void onDraw(Canvas canvas, long presentationTimeUs) {
+      canvas.drawColor(Color.TRANSPARENT, android.graphics.PorterDuff.Mode.CLEAR);
+      float margin = canvas.getWidth() * .04f, fontSize = Math.max(24f, canvas.getWidth() / 40f);
+      String scale = config.optString("fontSizeScale", "medium");
+      if ("small".equals(scale)) fontSize *= .7f; else if ("large".equals(scale)) fontSize *= 1.5f;
+      if (config.has("fontSizeValue") && !config.isNull("fontSizeValue")) fontSize = (float)(config.optDouble("fontSizeValue", 0) / 100d * (canvas.getWidth() / 10f));
+      Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.SUBPIXEL_TEXT_FLAG); p.setTypeface(Typeface.create("monospace", Typeface.BOLD)); p.setTextSize(fontSize);
+      p.setColor(parseColor(config.optString("overlayColor", "#FFFFFF"), Color.WHITE)); p.setShadowLayer(12f,3f,3f,0xE6000000);
+      java.util.ArrayList<String> raw = new java.util.ArrayList<>(); String project=config.optString("projectName", "");
+      if (!project.isEmpty()) raw.add(project.toUpperCase(Locale.ROOT));
+      if (config.optBoolean("showDateTime", false)) raw.add(formatDateTime(startEpochMs + presentationTimeUs / 1000L));
+      if (config.optBoolean("showGps", false)) raw.add(config.optString("gpsLabel", "SIN GPS"));
+      if (config.optBoolean("showLocation", false)) { String loc=config.optString("ubicacion", ""); if (!loc.isEmpty() && !"Buscando...".equals(loc)) raw.add(loc.toUpperCase(Locale.ROOT)); }
+      if (config.optBoolean("showTech", false)) raw.add(config.optString("tech", "N/A").toUpperCase(Locale.ROOT));
+      JSONArray fields=config.optJSONArray("customFields"); if(fields!=null) for(int i=0;i<fields.length();i++){ JSONObject cf=fields.optJSONObject(i); if(cf!=null&&cf.optBoolean("active",true)&&cf.optBoolean("showInPhoto",false)){String n=cf.optString("name","");String v=cf.optString("value","");if(!n.isEmpty())raw.add((v.isEmpty()?n:n+": "+v).toUpperCase(Locale.ROOT));}}
+      String pos=config.optString("overlayPosition","top-left"), logoPos=config.optString("logoPosition","top-left");
+      float logoW=(float)config.optDouble("logoSize",20)/100f*canvas.getWidth(); boolean same=logo!=null&&pos.equals(logoPos); float max=canvas.getWidth()-2*margin-(same?logoW+margin:0);
+      java.util.ArrayList<String> lines=new java.util.ArrayList<>(); for(String line:raw)wrap(line,p,max,lines);
+      float lh=fontSize*1.4f,total=lines.size()*lh,x=margin,y=margin; boolean right=pos.endsWith("right"),bottom=pos.startsWith("bottom"); if(right){p.setTextAlign(Paint.Align.RIGHT);x=canvas.getWidth()-margin;}else p.setTextAlign(Paint.Align.LEFT);if(bottom)y=canvas.getHeight()-total-margin;
+      for(int i=0;i<lines.size();i++)canvas.drawText(lines.get(i),x,y+i*lh+fontSize,p);p.clearShadowLayer();
+      if(logo!=null&&!logo.isRecycled()){float ratio=(float)logo.getHeight()/Math.max(1,logo.getWidth()),w=logoW,h=w*ratio,lx=margin,ly=margin;if(logoPos.endsWith("right"))lx=canvas.getWidth()-w-margin;if(logoPos.startsWith("bottom"))ly=canvas.getHeight()-h-margin;Paint lp=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);lp.setAlpha(Math.max(0,Math.min(255,Math.round((float)config.optDouble("logoOpacity",80)/100f*255f))));canvas.drawBitmap(logo,null,new RectF(lx,ly,lx+w,ly+h),lp);}
+    }
+    private static void wrap(String value,Paint p,float max,java.util.List<String> out){String cur="";int count=0;for(String word:value.split(" ")){String t=cur.isEmpty()?word:cur+" "+word;if(!cur.isEmpty()&&p.measureText(t)>max){out.add(cur);cur=word;if(++count>=4){out.set(out.size()-1,out.get(out.size()-1)+"...");cur="";break;}}else cur=t;}if(!cur.isEmpty())out.add(cur);}
+    private static int parseColor(String value,int fallback){try{return Color.parseColor(value);}catch(Exception e){return fallback;}}
+    private String formatDateTime(long ms){boolean f2="format2".equals(config.optString("dateTimeFormat","format1"));return new SimpleDateFormat(f2?"d/M/yyyy h:mm a":"dd MMM yyyy h:mm:ss a",new Locale("es","ES")).format(new Date(ms));}
+  }
+
 }

@@ -258,6 +258,7 @@ export default function App() {
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [videoProcessing, setVideoProcessing] = useState(false);
   const videoStartedAtRef = useRef<number | null>(null);
+  const videoRecordingPathRef = useRef<string | null>(null);
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
@@ -751,31 +752,110 @@ export default function App() {
 
   const startVideoRecording = async () => {
     if (!selectedProject || capturingRef.current || videoProcessing) return;
-    try { capturingRef.current = true; videoStartedAtRef.current = Date.now();
-      await CameraPreview.startRecordVideo({ storeToFile: true, videoQuality: '1080p', videoCodec: 'avc1', frameRate: 30, disableAudio: true, mirrorFrontCamera: false });
+    try {
+      capturingRef.current = true;
+      videoStartedAtRef.current = Date.now();
+      videoRecordingPathRef.current = null;
+
+      // Use the camera's real capabilities instead of assuming every device
+      // accepts the same quality/codec/frame-rate combination.
+      const [qualityResult, codecResult, frameRateResult] = await Promise.all([
+        CameraPreview.getSupportedVideoQualities().catch(() => ({ qualities: [] as string[] })),
+        CameraPreview.getSupportedVideoCodecs().catch(() => ({ codecs: [] as string[] })),
+        CameraPreview.getSupportedVideoFrameRates().catch(() => ({ frameRates: [] as number[] })),
+      ]);
+
+      const qualities = Array.isArray(qualityResult?.qualities) ? qualityResult.qualities : [];
+      const codecs = Array.isArray(codecResult?.codecs) ? codecResult.codecs : [];
+      const frameRates = Array.isArray(frameRateResult?.frameRates) ? frameRateResult.frameRates : [];
+
+      const quality = (['1080p', 'high', '720p', 'medium', '480p', 'low'] as string[])
+        .find(q => qualities.length === 0 || qualities.includes(q)) || 'high';
+      const codec = codecs.length === 0 || codecs.includes('avc1') ? 'avc1' : codecs[0];
+      const frameRate = frameRates.length === 0
+        ? 30
+        : (frameRates.includes(30) ? 30 : [...frameRates].sort((a, b) => Math.abs(a - 30) - Math.abs(b - 30))[0]);
+
+      console.log('[Video] native capabilities', { qualities, codecs, frameRates, selected: { quality, codec, frameRate } });
+
+      await CameraPreview.startRecordVideo({
+        storeToFile: true,
+        enableVideoMode: true,
+        position: cameraFacing,
+        videoQuality: quality as any,
+        videoCodec: codec as any,
+        frameRate,
+        disableAudio: true,
+        mirrorFrontCamera: false,
+      });
+
       setIsRecordingVideo(true);
-    } catch (e) { console.error('[Video] start failed', e); videoStartedAtRef.current = null; capturingRef.current = false; }
+      console.log('[Video] native recording STARTED');
+    } catch (e) {
+      console.error('[Video] start failed', e);
+      videoStartedAtRef.current = null;
+      videoRecordingPathRef.current = null;
+      capturingRef.current = false;
+    }
   };
 
   const stopVideoRecording = async () => {
     if (!isRecordingVideo || videoProcessing) return;
     setVideoProcessing(true);
+    setIsRecordingVideo(false);
+
+    let rawVideoPath = '';
     try {
-      const stopped = await CameraPreview.stopRecordVideo(); setIsRecordingVideo(false);
-      const rawVideoPath = stopped?.videoFilePath; if (!rawVideoPath) throw new Error('La cámara no devolvió la ruta del video');
+      const stopped = await CameraPreview.stopRecordVideo();
+      rawVideoPath = String(stopped?.videoFilePath || videoRecordingPathRef.current || '');
+      if (!rawVideoPath) throw new Error('La cámara no devolvió la ruta del video');
+
       const native = (window as any).FieldTraceNative;
-      if (!native || typeof native.composeVideoWithOverlay !== 'function' || typeof native.saveVideoToGallery !== 'function') throw new Error('El compositor nativo de video no está disponible');
-      const overlayConfig = buildVideoOverlayConfig(); if (!overlayConfig) throw new Error('No hay proyecto seleccionado para el overlay');
+      if (!native || typeof native.composeVideoWithOverlay !== 'function' || typeof native.saveVideoToGallery !== 'function') {
+        throw new Error('El compositor nativo de video no está disponible');
+      }
+
+      if (typeof native.getVideoFileInfo === 'function') {
+        const infoRaw = String(native.getVideoFileInfo(rawVideoPath) || '');
+        const info = infoRaw ? JSON.parse(infoRaw) : null;
+        if (!info?.exists || Number(info.size || 0) <= 0) {
+          throw new Error('La cámara terminó pero el archivo de video está vacío o no existe');
+        }
+        console.log('[Video] raw file verified', info);
+      }
+
+      const overlayConfig = buildVideoOverlayConfig();
+      if (!overlayConfig) throw new Error('No hay proyecto seleccionado para el overlay');
+
+      console.log('[Video] composing overlay...');
       const finalVideoPath = String(native.composeVideoWithOverlay(rawVideoPath, JSON.stringify(overlayConfig)) || '');
       if (!finalVideoPath) throw new Error('No se pudo integrar el overlay al video');
+
+      if (typeof native.getVideoFileInfo === 'function') {
+        const finalInfoRaw = String(native.getVideoFileInfo(finalVideoPath) || '');
+        const finalInfo = finalInfoRaw ? JSON.parse(finalInfoRaw) : null;
+        if (!finalInfo?.exists || Number(finalInfo.size || 0) <= 0) {
+          throw new Error('El video con overlay quedó vacío o no existe');
+        }
+        console.log('[Video] overlay file verified', finalInfo);
+      }
+
       const uuid = crypto.randomUUID ? crypto.randomUUID() : 'vid_' + Date.now() + Math.random().toString(36).slice(2);
       const savedUri = String(native.saveVideoToGallery(finalVideoPath, `FT_${uuid}.mp4`) || '');
       if (!savedUri) throw new Error('No se pudo guardar el video en la galería Field Trace');
+
       try { await CameraPreview.deleteFile({ path: rawVideoPath }); } catch {}
       try { await CameraPreview.deleteFile({ path: finalVideoPath }); } catch {}
-      console.log('[Video] saved with burned-in overlay:', savedUri);
-    } catch (e) { console.error('[Video] stop/process failed', e); try { if (isRecordingVideo) await CameraPreview.stopRecordVideo(); } catch {} setIsRecordingVideo(false);
-    } finally { videoStartedAtRef.current = null; capturingRef.current = false; setVideoProcessing(false); }
+      console.log('[Video] SAVED WITH BURNED-IN OVERLAY:', savedUri);
+    } catch (e) {
+      console.error('[Video] stop/process failed', e);
+      try { await CameraPreview.stopRecordVideo(); } catch {}
+    } finally {
+      videoStartedAtRef.current = null;
+      videoRecordingPathRef.current = null;
+      capturingRef.current = false;
+      setVideoProcessing(false);
+    }
   };
   const captureBatchPhoto = async () => {
     // Anti doble-tap con ref (sin spinner ni disabled en el botón)

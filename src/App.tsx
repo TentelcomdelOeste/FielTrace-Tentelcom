@@ -252,6 +252,7 @@ export default function App() {
   const [pendingEditSave, setPendingEditSave] = useState<any | null>(null);
   const [cameraZoom, setCameraZoom] = useState(1);
   const [flashMode, setFlashMode] = useState<'off' | 'on'>('off');
+  const [cameraFacing, setCameraFacing] = useState<'rear' | 'front'>('rear');
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
@@ -291,6 +292,19 @@ export default function App() {
   const onCameraTouchStart = (e: TouchEvent) => { if (e.touches.length===2) { const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY; pinchStartDist.current=Math.hypot(dx,dy); pinchStartZoom.current=cameraZoom; } };
   const onCameraTouchMove = (e: TouchEvent) => { if (e.touches.length===2 && pinchStartDist.current) { const dx=e.touches[0].clientX-e.touches[1].clientX, dy=e.touches[0].clientY-e.touches[1].clientY; void applyNativeZoom(Math.max(1,Math.min(8,pinchStartZoom.current*(Math.hypot(dx,dy)/pinchStartDist.current)))); } };
   const onCameraTouchEnd = () => { pinchStartDist.current=null; };
+
+  const switchCameraFacing = async () => {
+    if (capturingRef.current) return;
+    const nextFacing = cameraFacing === 'rear' ? 'front' : 'rear';
+    try {
+      // Reiniciar únicamente el preview nativo; el overlay React permanece intacto.
+      await CameraPreview.stop({ force: true }).catch(() => {});
+      setCameraFacing(nextFacing);
+    } catch (error) {
+      console.warn('[Camera] switch facing:', error);
+    }
+  };
+
   const ensureFlashArmed = async (targetMode: 'off' | 'on') => {
     try {
       if (targetMode === 'on') {
@@ -320,7 +334,7 @@ export default function App() {
 
     (async () => {
       try {
-        await CameraPreview.start({ position: 'rear', toBack: true, aspectRatio: 'fill', aspectMode: 'cover', storeToFile: false, disableAudio: true, initialZoomLevel: 1, rotateWhenOrientationChanged: true });
+        await CameraPreview.start({ position: cameraFacing, toBack: true, aspectRatio: 'fill', aspectMode: 'cover', storeToFile: false, disableAudio: true, initialZoomLevel: 1, rotateWhenOrientationChanged: true });
         if (!active) return;
         await CameraPreview.setZoom({ level: cameraZoom });
         await ensureFlashArmed(flashMode);
@@ -335,7 +349,7 @@ export default function App() {
       void CameraPreview.stop({ force: true }).catch((error) => console.warn('[Camera] stop:', error));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentStep]);
+  }, [currentStep, cameraFacing]);
 
   useEffect(() => {
     if (currentStep !== 'camera') return;
@@ -2007,8 +2021,17 @@ export default function App() {
               <Settings className="w-5 h-5 pointer-events-none" />
             </motion.button>
 
-            {/* Flash + Zoom controls */}
+            {/* Camera controls */}
             <div className="absolute top-6 right-6 z-50 flex flex-col gap-2 items-end">
+              <button
+                type="button"
+                onClick={() => void switchCameraFacing()}
+                className="w-10 h-10 bg-black/30 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white active:scale-95"
+                title={cameraFacing === 'rear' ? 'Cambiar a cámara frontal' : 'Cambiar a cámara trasera'}
+                aria-label={cameraFacing === 'rear' ? 'Cambiar a cámara frontal' : 'Cambiar a cámara trasera'}
+              >
+                <RefreshCcw className="w-5 h-5" />
+              </button>
               <button
                 type="button"
                 onClick={async () => {
@@ -2035,7 +2058,7 @@ export default function App() {
 
           {/* Shutter Bar */}
           <div className="h-[76px] py-1.5 px-8 bg-black flex items-center justify-between shrink-0 border-t border-white/10">
-            <button onClick={() => { setCameraZoom(1); setFlashMode('off'); setCurrentStep('history'); }} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
+            <button onClick={() => { setCameraZoom(1); setFlashMode('off'); setCameraFacing('rear'); setCurrentStep('history'); }} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
               <ArrowLeft className="w-6 h-6"/>
             </button>
             

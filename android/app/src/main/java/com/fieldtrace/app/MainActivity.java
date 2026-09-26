@@ -539,6 +539,51 @@ public class MainActivity extends BridgeActivity {
     }
 
     @JavascriptInterface
+    public String savePdfToDownloads(String base64Data, String fileName) {
+      if (base64Data == null || base64Data.trim().isEmpty()) return "";
+      String safeName = fileName == null || fileName.trim().isEmpty() ? "FieldTrace_Report.pdf" : fileName.trim();
+      if (!safeName.toLowerCase(Locale.US).endsWith(".pdf")) safeName += ".pdf";
+      try {
+        byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          ContentValues values = new ContentValues();
+          values.put(MediaStore.Downloads.DISPLAY_NAME, safeName);
+          values.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
+          values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + ALBUM_NAME + "/");
+          values.put(MediaStore.Downloads.IS_PENDING, 1);
+          Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+          if (uri == null) return "";
+          try (java.io.OutputStream out = getContentResolver().openOutputStream(uri)) {
+            if (out == null) throw new IllegalStateException("PDF_OUTPUT_STREAM_NULL");
+            out.write(bytes);
+            out.flush();
+          } catch (Exception copyError) {
+            try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
+            throw copyError;
+          }
+          ContentValues published = new ContentValues();
+          published.put(MediaStore.Downloads.IS_PENDING, 0);
+          getContentResolver().update(uri, published, null, null);
+          return uri.toString();
+        }
+        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ALBUM_NAME);
+        if (!dir.exists() && !dir.mkdirs()) return "";
+        File destination = new File(dir, safeName);
+        try (FileOutputStream out = new FileOutputStream(destination)) {
+          out.write(bytes);
+          out.flush();
+        }
+        Intent scan = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+        scan.setData(Uri.fromFile(destination));
+        sendBroadcast(scan);
+        return destination.getAbsolutePath();
+      } catch (Exception e) {
+        android.util.Log.e("FieldTracePDF", "Save PDF failed", e);
+        return "";
+      }
+    }
+
+    @JavascriptInterface
     public String saveVideoToGallery(String videoPath, String fileName) {
       if (videoPath == null || videoPath.trim().isEmpty()) return "";
       File source = resolveVideoFile(videoPath.trim());

@@ -258,6 +258,25 @@ export default function App() {
   const [isRecordingVideo, setIsRecordingVideo] = useState(false);
   const [videoProcessing, setVideoProcessing] = useState(false);
   const videoStartedAtRef = useRef<number | null>(null);
+  const videoRecordingPathRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let listenerHandle: { remove: () => Promise<void> } | null = null;
+    void CameraPreview.addListener('recordingFinished', (event: { videoFilePath?: string; reason?: string }) => {
+      if (event?.videoFilePath) {
+        videoRecordingPathRef.current = event.videoFilePath;
+        console.log('[Video] recordingFinished:', event.videoFilePath, event.reason || 'manual');
+      }
+    }).then(handle => {
+      listenerHandle = handle;
+    }).catch(error => {
+      console.warn('[Video] recordingFinished listener unavailable:', error);
+    });
+    return () => {
+      if (listenerHandle) void listenerHandle.remove().catch(() => {});
+    };
+  }, []);
+
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
 
@@ -751,32 +770,131 @@ export default function App() {
 
   const startVideoRecording = async () => {
     if (!selectedProject || capturingRef.current || videoProcessing) return;
-    try { capturingRef.current = true; videoStartedAtRef.current = Date.now();
-      await CameraPreview.startRecordVideo({ storeToFile: true, videoQuality: '1080p', videoCodec: 'avc1', frameRate: 30, disableAudio: true, mirrorFrontCamera: false });
+    try {
+      capturingRef.current = true;
+      videoStartedAtRef.current = Date.now();
+      videoRecordingPathRef.current = null;
+
+      // Use the camera's real capabilities instead of assuming every device
+      // accepts the same quality/codec/frame-rate combination.
+      const [qualityResult, codecResult, frameRateResult] = await Promise.all([
+        CameraPreview.getSupportedVideoQualities().catch(() => ({ qualities: [] as string[] })),
+        CameraPreview.getSupportedVideoCodecs().catch(() => ({ codecs: [] as string[] })),
+        CameraPreview.getSupportedVideoFrameRates().catch(() => ({ frameRates: [] as number[] })),
+      ]);
+
+      const qualities = Array.isArray(qualityResult?.qualities) ? qualityResult.qualities : [];
+      const codecs = Array.isArray(codecResult?.codecs) ? codecResult.codecs : [];
+      const frameRates = Array.isArray(frameRateResult?.frameRates) ? frameRateResult.frameRates : [];
+
+      const quality = (['1080p', 'high', '720p', 'medium', '480p', 'low'] as string[])
+        .find(q => qualities.length === 0 || qualities.includes(q)) || 'high';
+      // H.264/AVC is intentionally forced because the burned-in overlay is
+      // transcoded through Media3 to H.264 for maximum Android compatibility.
+      // The plugin documents avc1 as a supported Android video codec.
+      const codec = 'avc1';
+      const frameRate = frameRates.length === 0
+        ? 30
+        : (frameRates.includes(30) ? 30 : [...frameRates].sort((a, b) => Math.abs(a - 30) - Math.abs(b - 30))[0]);
+
+      console.log('[Video] native capabilities', { qualities, codecs, frameRates, selected: { quality, codec, frameRate } });
+
+      // Explicitly set the codec on the active session before recording.
+      await CameraPreview.setVideoCodec({ codec: 'avc1' }).catch((error) => {
+        console.warn('[Video] setVideoCodec(avc1) fallback:', error);
+      });
+
+      await CameraPreview.startRecordVideo({
+        storeToFile: true,
+        enableVideoMode: true,
+        position: cameraFacing,
+        videoQuality: quality as any,
+        videoCodec: codec as any,
+        frameRate,
+        disableAudio: true,
+        mirrorFrontCamera: false,
+      });
+
+      const actualCodec = await CameraPreview.getVideoCodec().catch(() => ({ codec: codec }));
+      console.log('[Video] recording codec:', actualCodec);
       setIsRecordingVideo(true);
-    } catch (e) { console.error('[Video] start failed', e); videoStartedAtRef.current = null; capturingRef.current = false; }
+      console.log('[Video] native recording STARTED');
+    } catch (e) {
+      console.error('[Video] start failed', e);
+      videoStartedAtRef.current = null;
+      videoRecordingPathRef.current = null;
+      capturingRef.current = false;
+    }
   };
 
   const stopVideoRecording = async () => {
     if (!isRecordingVideo || videoProcessing) return;
     setVideoProcessing(true);
+    setIsRecordingVideo(false);
+
+    let rawVideoPath = '';
     try {
-      const stopped = await CameraPreview.stopRecordVideo(); setIsRecordingVideo(false);
-      const rawVideoPath = stopped?.videoFilePath; if (!rawVideoPath) throw new Error('La cámara no devolvió la ruta del video');
+      const stopped = await CameraPreview.stopRecordVideo();
+      rawVideoPath = String(stopped?.videoFilePath || videoRecordingPathRef.current || '');
+      if (!rawVideoPath) throw new Error('La cámara terminó pero no devolvió la ruta del video');
+
       const native = (window as any).FieldTraceNative;
-      if (!native || typeof native.composeVideoWithOverlay !== 'function' || typeof native.saveVideoToGallery !== 'function') throw new Error('El compositor nativo de video no está disponible');
-      const overlayConfig = buildVideoOverlayConfig(); if (!overlayConfig) throw new Error('No hay proyecto seleccionado para el overlay');
+      if (!native || typeof native.composeVideoWithOverlay !== 'function' || typeof native.saveVideoToGallery !== 'function') {
+        throw new Error('El compositor nativo de video no está disponible');
+      }
+
+      // The camera MP4 is kept only as a temporary source. It is NOT copied
+      // to the gallery, so the user receives only the final overlay video.
+      if (typeof native.getVideoFileInfo === 'function') {
+        const infoRaw = String(native.getVideoFileInfo(rawVideoPath) || '');
+        const info = infoRaw ? JSON.parse(infoRaw) : null;
+        if (!info?.exists || Number(info.size || 0) <= 0) {
+          throw new Error('El archivo original de video está vacío');
+        }
+        console.log('[Video] raw file verified:', info);
+      }
+
+      const overlayConfig = buildVideoOverlayConfig();
+      if (!overlayConfig) throw new Error('No hay proyecto seleccionado para el overlay');
+
+      console.log('[Video] composing overlay...');
       const finalVideoPath = String(native.composeVideoWithOverlay(rawVideoPath, JSON.stringify(overlayConfig)) || '');
       if (!finalVideoPath) throw new Error('No se pudo integrar el overlay al video');
+
+      if (typeof native.getVideoFileInfo === 'function') {
+        const finalInfoRaw = String(native.getVideoFileInfo(finalVideoPath) || '');
+        const finalInfo = finalInfoRaw ? JSON.parse(finalInfoRaw) : null;
+        if (!finalInfo?.exists || Number(finalInfo.size || 0) <= 0) {
+          throw new Error('El video final con overlay está vacío');
+        }
+        console.log('[Video] overlay file verified:', finalInfo);
+      }
+
       const uuid = crypto.randomUUID ? crypto.randomUUID() : 'vid_' + Date.now() + Math.random().toString(36).slice(2);
       const savedUri = String(native.saveVideoToGallery(finalVideoPath, `FT_${uuid}.mp4`) || '');
       if (!savedUri) throw new Error('No se pudo guardar el video en la galería Field Trace');
+
+      // Only the final processed MP4 reaches the gallery. Remove both temporary
+      // files after successful persistence.
       try { await CameraPreview.deleteFile({ path: rawVideoPath }); } catch {}
       try { await CameraPreview.deleteFile({ path: finalVideoPath }); } catch {}
-      console.log('[Video] saved with burned-in overlay:', savedUri);
-    } catch (e) { console.error('[Video] stop/process failed', e); try { if (isRecordingVideo) await CameraPreview.stopRecordVideo(); } catch {} setIsRecordingVideo(false);
-    } finally { videoStartedAtRef.current = null; capturingRef.current = false; setVideoProcessing(false); }
+      console.log('[Video] only FINAL MP4 saved with burned-in overlay:', savedUri);
+    } catch (e) {
+      console.error('[Video] stop/process failed:', e);
+      // Keep the raw camera file as an internal fallback only; never publish it
+      // to the gallery during the normal successful flow.
+      try { if (rawVideoPath && (window as any).FieldTraceNative?.getVideoFileInfo) {
+        console.warn('[Video] raw source retained temporarily after failure:', rawVideoPath);
+      }} catch {}
+      try { await CameraPreview.stopRecordVideo(); } catch {}
+    } finally {
+      videoStartedAtRef.current = null;
+      videoRecordingPathRef.current = null;
+      capturingRef.current = false;
+      setVideoProcessing(false);
+    }
   };
+
   const captureBatchPhoto = async () => {
     // Anti doble-tap con ref (sin spinner ni disabled en el botón)
     if (!selectedProject || capturingRef.current) return;
@@ -2122,12 +2240,12 @@ export default function App() {
                 type="button"
                 onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}
                 disabled={videoProcessing}
-                className={`h-14 min-w-[92px] px-4 rounded-2xl border border-white/20 active:scale-95 transition-all flex items-center justify-center gap-2 ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500/90 text-white'} disabled:opacity-50`}
+                className={`h-11 min-w-[58px] px-2.5 rounded-xl border border-white/20 active:scale-95 transition-all flex items-center justify-center gap-1.5 ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500/90 text-white'} disabled:opacity-50`}
                 title={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
                 aria-label={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
               >
-                {isRecordingVideo ? <Square className="w-5 h-5 fill-white" /> : <Video className="w-5 h-5" />}
-                <span className="text-[11px] font-black tracking-wide">{isRecordingVideo ? 'DETENER' : 'VIDEO'}</span>
+                {isRecordingVideo ? <Square className="w-4 h-4 fill-white" /> : <Video className="w-4 h-4" />}
+                <span className="text-[9px] font-black tracking-wide">{isRecordingVideo ? 'DETENER' : 'VIDEO'}</span>
               </button>
               <button
                 type="button"

@@ -44,6 +44,7 @@ import java.text.SimpleDateFormat;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.effect.CanvasOverlay;
 import androidx.media3.effect.OverlayEffect;
@@ -442,8 +443,11 @@ public class MainActivity extends BridgeActivity {
     @JavascriptInterface
     public String composeVideoWithOverlay(String inputPath, String overlayJson) {
       if (inputPath == null || inputPath.trim().isEmpty()) return "";
-      final File input = new File(inputPath.trim());
-      if (!input.isFile() || input.length() == 0) return "";
+      final File input = resolveVideoFile(inputPath.trim());
+      if (input == null || !input.isFile() || input.length() == 0) {
+        android.util.Log.e("FieldTraceVideo", "Input video missing: " + inputPath);
+        return "";
+      }
       final File output = new File(getCacheDir(), "FT_overlay_" + System.currentTimeMillis() + ".mp4");
       final CountDownLatch latch = new CountDownLatch(1);
       final String[] result = new String[]{""};
@@ -453,26 +457,38 @@ public class MainActivity extends BridgeActivity {
           VideoMetadataOverlay overlay = new VideoMetadataOverlay(new JSONObject(overlayJson == null ? "{}" : overlayJson));
           MediaItem item = MediaItem.fromUri(Uri.fromFile(input));
           EditedMediaItem edited = new EditedMediaItem.Builder(item)
+              .setRemoveAudio(true)
               .setEffects(new Effects(Collections.emptyList(), Collections.singletonList(
                   new OverlayEffect(Collections.singletonList(overlay)))))
               .build();
+
+          // Media3 Transformer must be accessed from one application thread.
+          // Run the Transformer lifecycle on Android's main application thread,
+          // while this JS bridge method waits on its own bridge thread.
           Transformer transformer = new Transformer.Builder(MainActivity.this)
+              .setVideoMimeType(MimeTypes.VIDEO_H264)
               .addListener(new Transformer.Listener() {
                 @Override public void onCompleted(androidx.media3.transformer.Composition c, ExportResult r) {
-                  result[0] = output.getAbsolutePath(); latch.countDown();
+                  result[0] = output.getAbsolutePath();
+                  android.util.Log.d("FieldTraceVideo", "Overlay export completed: " + result[0]);
+                  latch.countDown();
                 }
                 @Override public void onError(androidx.media3.transformer.Composition c, ExportResult r, ExportException e) {
-                  error[0] = e == null ? "VIDEO_TRANSFORM_ERROR" : String.valueOf(e.getMessage()); latch.countDown();
+                  error[0] = e == null ? "VIDEO_TRANSFORM_ERROR" : String.valueOf(e.getMessage());
+                  android.util.Log.e("FieldTraceVideo", "Overlay export error: " + error[0], e);
+                  latch.countDown();
                 }
               }).build();
           transformer.start(edited, output.getAbsolutePath());
-        } catch (Exception e) { error[0] = String.valueOf(e.getMessage()); latch.countDown(); }
+        } catch (Exception e) {
+          error[0] = String.valueOf(e.getMessage());
+          android.util.Log.e("FieldTraceVideo", "Overlay setup failed", e);
+          latch.countDown();
+        }
       };
       try {
-        // Never post the transformation work to the WebView/main thread and then
-        // wait here: that would deadlock the JS bridge while Media3 is running.
-        Thread worker = new Thread(work, "FieldTraceVideoOverlay");
-        worker.start();
+        Handler mainHandler = new Handler(Looper.getMainLooper());
+        mainHandler.post(work);
         if (!latch.await(180, TimeUnit.SECONDS)) error[0] = "VIDEO_TRANSFORM_TIMEOUT";
       } catch (InterruptedException e) { Thread.currentThread().interrupt(); error[0] = "VIDEO_TRANSFORM_INTERRUPTED"; }
       if (result[0].isEmpty() || !new File(result[0]).isFile()) {
@@ -484,10 +500,94 @@ public class MainActivity extends BridgeActivity {
     }
 
     @JavascriptInterface
+    public String getVideoFileInfo(String videoPath) {
+      try {
+        if (videoPath == null || videoPath.trim().isEmpty()) return "{}";
+        File file = resolveVideoFile(videoPath.trim());
+        if (file == null) return "{\"exists\":false}";
+        JSONObject info = new JSONObject();
+        info.put("exists", file.isFile() && file.length() > 0);
+        info.put("size", file.length());
+        info.put("path", file.getAbsolutePath());
+        return info.toString();
+      } catch (Exception e) {
+        try {
+          JSONObject error = new JSONObject();
+          error.put("exists", false);
+          error.put("error", String.valueOf(e.getMessage()));
+          return error.toString();
+        } catch (Exception ignored) {
+          return "{\"exists\":false}";
+        }
+      }
+    }
+
+    private File resolveVideoFile(String path) {
+      try {
+        if (path == null || path.trim().isEmpty()) return null;
+        String value = path.trim();
+        if (value.startsWith("file://")) {
+          Uri uri = Uri.parse(value);
+          String decodedPath = uri.getPath();
+          return decodedPath == null ? null : new File(decodedPath);
+        }
+        if (value.startsWith("content://")) return null;
+        return new File(value);
+      } catch (Exception e) {
+        return null;
+      }
+    }
+
+    @JavascriptInterface
+    public String savePdfToDownloads(String base64Data, String fileName) {
+      if (base64Data == null || base64Data.trim().isEmpty()) return "";
+      String safeName = fileName == null || fileName.trim().isEmpty() ? "FieldTrace_Report.pdf" : fileName.trim();
+      if (!safeName.toLowerCase(Locale.US).endsWith(".pdf")) safeName += ".pdf";
+      try {
+        byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          ContentValues values = new ContentValues();
+          values.put(MediaStore.Downloads.DISPLAY_NAME, safeName);
+          values.put(MediaStore.Downloads.MIME_TYPE, "application/pdf");
+          values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + ALBUM_NAME + "/");
+          values.put(MediaStore.Downloads.IS_PENDING, 1);
+          Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+          if (uri == null) return "";
+          try (java.io.OutputStream out = getContentResolver().openOutputStream(uri)) {
+            if (out == null) throw new IllegalStateException("PDF_OUTPUT_STREAM_NULL");
+            out.write(bytes);
+            out.flush();
+          } catch (Exception copyError) {
+            try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
+            throw copyError;
+          }
+          ContentValues published = new ContentValues();
+          published.put(MediaStore.Downloads.IS_PENDING, 0);
+          getContentResolver().update(uri, published, null, null);
+          return uri.toString();
+        }
+        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ALBUM_NAME);
+        if (!dir.exists() && !dir.mkdirs()) return "";
+        File destination = new File(dir, safeName);
+        try (FileOutputStream out = new FileOutputStream(destination)) {
+          out.write(bytes);
+          out.flush();
+        }
+        Intent scan = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+        scan.setData(Uri.fromFile(destination));
+        sendBroadcast(scan);
+        return destination.getAbsolutePath();
+      } catch (Exception e) {
+        android.util.Log.e("FieldTracePDF", "Save PDF failed", e);
+        return "";
+      }
+    }
+
+    @JavascriptInterface
     public String saveVideoToGallery(String videoPath, String fileName) {
       if (videoPath == null || videoPath.trim().isEmpty()) return "";
-      File source = new File(videoPath.trim());
-      if (!source.isFile() || source.length() == 0) return "";
+      File source = resolveVideoFile(videoPath.trim());
+      if (source == null || !source.isFile() || source.length() == 0) return "";
       String safeName = fileName == null || fileName.trim().isEmpty() ? "FT_video.mp4" : fileName.trim();
       if (!safeName.toLowerCase(Locale.US).endsWith(".mp4")) safeName += ".mp4";
       try {

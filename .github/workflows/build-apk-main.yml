@@ -305,6 +305,21 @@ jobs:
           PY
           grep -q "versionCode ${GITHUB_RUN_NUMBER}" android/app/build.gradle
 
+      - name: VIDEO OVERLAY IMPLEMENTATION AUDIT
+        run: |
+          set -euo pipefail
+          grep -q 'startRecordVideo' src/App.tsx
+          grep -q 'stopRecordVideo' src/App.tsx
+          grep -q 'enableVideoMode: true' src/App.tsx
+          grep -q 'composeVideoWithOverlay' src/App.tsx
+          grep -q 'saveVideoToGallery' src/App.tsx
+          grep -q 'composeVideoWithOverlay' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'saveVideoToGallery' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          grep -q 'media3-transformer:1.11.1' android/app/build.gradle
+          grep -q 'media3-effect:1.11.1' android/app/build.gradle
+          grep -q 'media3-common:1.11.1' android/app/build.gradle
+          grep -q 'video/mp4' android/app/src/main/java/com/fieldtrace/app/MainActivity.java
+          echo "VIDEO OVERLAY IMPLEMENTATION AUDIT PASSED"
       - name: Prepare Gradle
         working-directory: android
         run: chmod +x gradlew

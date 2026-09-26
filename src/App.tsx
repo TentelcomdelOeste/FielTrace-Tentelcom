@@ -833,26 +833,18 @@ export default function App() {
     setIsRecordingVideo(false);
 
     let rawVideoPath = '';
-    let rawSavedUri = '';
     try {
       const stopped = await CameraPreview.stopRecordVideo();
       rawVideoPath = String(stopped?.videoFilePath || videoRecordingPathRef.current || '');
       if (!rawVideoPath) throw new Error('La cámara terminó pero no devolvió la ruta del video');
 
       const native = (window as any).FieldTraceNative;
-      if (!native || typeof native.saveVideoToGallery !== 'function') {
-        throw new Error('El guardado nativo de video no está disponible');
+      if (!native || typeof native.composeVideoWithOverlay !== 'function' || typeof native.saveVideoToGallery !== 'function') {
+        throw new Error('El compositor nativo de video no está disponible');
       }
 
-      // IMPORTANT: persist the real camera output BEFORE attempting overlay composition.
-      // The raw MP4 is kept until the final overlay MP4 has been successfully saved.
-      const rawUuid = crypto.randomUUID ? crypto.randomUUID() : 'raw_' + Date.now() + Math.random().toString(36).slice(2);
-      rawSavedUri = String(native.saveVideoToGallery(rawVideoPath, `FT_RAW_${rawUuid}.mp4`) || '');
-      if (!rawSavedUri) {
-        throw new Error('La cámara devolvió una ruta, pero no se pudo guardar el MP4 original');
-      }
-      console.log('[Video] RAW MP4 saved:', rawSavedUri);
-
+      // The camera MP4 is kept only as a temporary source. It is NOT copied
+      // to the gallery, so the user receives only the final overlay video.
       if (typeof native.getVideoFileInfo === 'function') {
         const infoRaw = String(native.getVideoFileInfo(rawVideoPath) || '');
         const info = infoRaw ? JSON.parse(infoRaw) : null;
@@ -862,47 +854,38 @@ export default function App() {
         console.log('[Video] raw file verified:', info);
       }
 
-      if (typeof native.composeVideoWithOverlay !== 'function') {
-        console.warn('[Video] compositor no disponible; se conserva el MP4 original');
-        return;
-      }
-
       const overlayConfig = buildVideoOverlayConfig();
       if (!overlayConfig) throw new Error('No hay proyecto seleccionado para el overlay');
 
       console.log('[Video] composing overlay...');
       const finalVideoPath = String(native.composeVideoWithOverlay(rawVideoPath, JSON.stringify(overlayConfig)) || '');
-      if (!finalVideoPath) {
-        console.warn('[Video] overlay failed; RAW MP4 remains available:', rawSavedUri);
-        return;
-      }
+      if (!finalVideoPath) throw new Error('No se pudo integrar el overlay al video');
 
       if (typeof native.getVideoFileInfo === 'function') {
         const finalInfoRaw = String(native.getVideoFileInfo(finalVideoPath) || '');
         const finalInfo = finalInfoRaw ? JSON.parse(finalInfoRaw) : null;
         if (!finalInfo?.exists || Number(finalInfo.size || 0) <= 0) {
-          console.warn('[Video] overlay output invalid; RAW MP4 remains available:', rawSavedUri);
-          return;
+          throw new Error('El video final con overlay está vacío');
         }
         console.log('[Video] overlay file verified:', finalInfo);
       }
 
       const uuid = crypto.randomUUID ? crypto.randomUUID() : 'vid_' + Date.now() + Math.random().toString(36).slice(2);
       const savedUri = String(native.saveVideoToGallery(finalVideoPath, `FT_${uuid}.mp4`) || '');
-      if (!savedUri) {
-        console.warn('[Video] final overlay could not be saved; RAW MP4 remains available:', rawSavedUri);
-        return;
-      }
+      if (!savedUri) throw new Error('No se pudo guardar el video en la galería Field Trace');
 
+      // Only the final processed MP4 reaches the gallery. Remove both temporary
+      // files after successful persistence.
       try { await CameraPreview.deleteFile({ path: rawVideoPath }); } catch {}
       try { await CameraPreview.deleteFile({ path: finalVideoPath }); } catch {}
-      console.log('[Video] FINAL MP4 saved with burned-in overlay:', savedUri);
+      console.log('[Video] only FINAL MP4 saved with burned-in overlay:', savedUri);
     } catch (e) {
       console.error('[Video] stop/process failed:', e);
-      // Never delete the raw recording after a processing failure.
-      if (rawSavedUri) {
-        console.warn('[Video] RAW MP4 preserved after failure:', rawSavedUri);
-      }
+      // Keep the raw camera file as an internal fallback only; never publish it
+      // to the gallery during the normal successful flow.
+      try { if (rawVideoPath && (window as any).FieldTraceNative?.getVideoFileInfo) {
+        console.warn('[Video] raw source retained temporarily after failure:', rawVideoPath);
+      }} catch {}
       try { await CameraPreview.stopRecordVideo(); } catch {}
     } finally {
       videoStartedAtRef.current = null;
@@ -2257,12 +2240,12 @@ export default function App() {
                 type="button"
                 onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}
                 disabled={videoProcessing}
-                className={`h-14 min-w-[92px] px-4 rounded-2xl border border-white/20 active:scale-95 transition-all flex items-center justify-center gap-2 ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500/90 text-white'} disabled:opacity-50`}
+                className={`h-11 min-w-[58px] px-2.5 rounded-xl border border-white/20 active:scale-95 transition-all flex items-center justify-center gap-1.5 ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500/90 text-white'} disabled:opacity-50`}
                 title={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
                 aria-label={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
               >
-                {isRecordingVideo ? <Square className="w-5 h-5 fill-white" /> : <Video className="w-5 h-5" />}
-                <span className="text-[11px] font-black tracking-wide">{isRecordingVideo ? 'DETENER' : 'VIDEO'}</span>
+                {isRecordingVideo ? <Square className="w-4 h-4 fill-white" /> : <Video className="w-4 h-4" />}
+                <span className="text-[9px] font-black tracking-wide">{isRecordingVideo ? 'DETENER' : 'VIDEO'}</span>
               </button>
               <button
                 type="button"

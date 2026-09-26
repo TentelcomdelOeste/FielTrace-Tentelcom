@@ -1,4 +1,5 @@
 name: Build FielTrace APK - native camera fix
+# Video overlay build verification
 
 # Trigger build for the latest main application update.
 

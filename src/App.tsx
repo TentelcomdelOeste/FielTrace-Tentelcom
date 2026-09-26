@@ -1279,7 +1279,7 @@ export default function App() {
                      <span className="text-[9px] font-black text-green-800 uppercase">Excel (.xlsx)</span>
                    </button>
                    <button 
-                    onClick={() => exportService.generatePDF(selectedProject!.id!)}
+                    onClick={() => void exportService.generatePDF(selectedProject!.id!).catch((e) => alert(`No se pudo generar el PDF: ${e instanceof Error ? e.message : 'error desconocido'}`))
                     className="py-4 bg-[#FEF2F2] border border-red-200 rounded-[1.5rem] flex flex-col items-center gap-2 group transition-all active:scale-95 shadow-sm"
                    >
                      <FileText className="w-6 h-6 text-red-600"/>
@@ -1402,7 +1402,7 @@ export default function App() {
                     <h3 className="text-[11px] font-black uppercase text-gray-500 tracking-widest">Resumen de Materiales</h3>
                     <div className="flex gap-2">
                        <button onClick={() => exportService.generateExcel(selectedProject.id!)} className="p-2 bg-green-50 text-green-600 rounded-lg"><FileSpreadsheet className="w-4 h-4" /></button>
-                       <button onClick={() => exportService.generatePDF(selectedProject.id!)} className="p-2 bg-red-50 text-red-600 rounded-lg"><FileText className="w-4 h-4" /></button>
+                       <button onClick={() => void exportService.generatePDF(selectedProject.id!).catch((e) => alert(`No se pudo generar el PDF: ${e instanceof Error ? e.message : 'error desconocido'}`)) className="p-2 bg-red-50 text-red-600 rounded-lg"><FileText className="w-4 h-4" /></button>
                     </div>
                   </div>
                   <div className="p-6 space-y-4">

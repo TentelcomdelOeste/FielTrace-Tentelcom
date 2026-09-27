@@ -574,6 +574,7 @@ public class MainActivity extends BridgeActivity {
     public String savePdfToDownloads(String base64Data, String fileName) {
       if (base64Data == null || base64Data.trim().isEmpty()) return "";
       String safeName = fileName == null || fileName.trim().isEmpty() ? "FieldTrace_Report.pdf" : fileName.trim();
+      safeName = safeName.replaceAll("[\\\\/:*?\"<>|]+", "_");
       if (!safeName.toLowerCase(Locale.US).endsWith(".pdf")) safeName += ".pdf";
       try {
         byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);

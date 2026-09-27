@@ -604,14 +604,19 @@ jobs:
         run: |
           test -s android/app/build/outputs/apk/debug/FieldTrace.apk
           echo "APK BUILD AND FINAL AUDIT PASSED"
+      - name: FINAL CAMERA SHUTTER AUDIT
+        run: |
+          echo "=== CAMERA SHUTTER GRID AUDIT ==="
+          grep -q 'grid grid-cols-7 items-center h-\[76px\]' src/App.tsx || (echo "ERROR: shutter bar grid missing" && exit 1)
+          grep -q 'col-start-3 flex items-center justify-center' src/App.tsx || (echo "ERROR: video slot missing" && exit 1)
+          grep -q 'col-start-4 flex items-center justify-center' src/App.tsx || (echo "ERROR: photo slot missing" && exit 1)
+          grep -q 'col-start-7 flex items-center justify-center' src/App.tsx || (echo "ERROR: gallery slot missing" && exit 1)
+          ! grep -q 'translate-x-\[56px\]\|translate-x-\[68px\]\|translate-x-\[78px\]' src/App.tsx || (echo "ERROR: old shutter offset remains" && exit 1)
+          echo "CAMERA_SHUTTER_GRID_AUDIT=PASS"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: FieldTrace-apk
           path: android/app/build/outputs/apk/debug/FieldTrace.apk
           if-no-files-found: error
-
-      echo "=== PDF/EXCEL STATIC BUNDLE AUDIT ==="
-      ! grep -R "import(['\\\"]jspdf" -n src || (echo "ERROR: dynamic jsPDF import remains" && exit 1)
-      grep -q "import { jsPDF } from 'jspdf'" src/services/exportService.ts || (echo "ERROR: static jsPDF import missing" && exit 1)
-      echo "NO_DYNAMIC_JSPDF=PASS"

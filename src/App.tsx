@@ -2230,21 +2230,27 @@ export default function App() {
           </div>
 
           {/* Shutter Bar */}
-          <div className="relative h-[76px] py-1.5 px-8 bg-black shrink-0 border-t border-white/10">
-            <button onClick={() => { setCameraZoom(1); setFlashMode('off'); setCameraFacing('rear'); setCurrentStep('history'); }} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
+          <div className="relative h-[76px] bg-black border-t border-white/10 shrink-0">
+            <button
+              type="button"
+              onClick={() => { setCameraZoom(1); setFlashMode('off'); setCameraFacing('rear'); setCurrentStep('history'); }}
+              className="absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white active:scale-95"
+              aria-label="Volver"
+            >
               <ArrowLeft className="w-6 h-6"/>
             </button>
-            
+
             <button
               type="button"
               onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}
               disabled={videoProcessing}
-              className={`absolute left-1/2 -translate-x-[78px] top-1/2 -translate-y-1/2 w-[48px] h-[48px] rounded-full border-2 border-white/80 active:scale-95 transition-all flex items-center justify-center ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} disabled:opacity-50`}
+              className={`absolute left-1/2 top-1/2 -translate-x-[56px] -translate-y-1/2 w-[48px] h-[48px] rounded-full border-2 border-white/80 active:scale-95 transition-all flex items-center justify-center ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500 text-white'} disabled:opacity-50`}
               title={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
               aria-label={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
             >
               {isRecordingVideo ? <Square className="w-5 h-5 fill-white" /> : <Video className="w-6 h-6" />}
             </button>
+
             <button
               type="button"
               onClick={captureBatchPhoto}
@@ -2253,10 +2259,12 @@ export default function App() {
               title="Capturar fotografía"
               aria-label="Capturar fotografía"
             >
-              <div className="w-full h-full bg-white rounded-full shadow-inner flex items-center justify-center"><div className="w-10 h-10 border-4 border-gray-100 rounded-full"></div></div>
+              <div className="w-full h-full bg-white rounded-full shadow-inner flex items-center justify-center">
+                <div className="w-10 h-10 border-4 border-gray-100 rounded-full"></div>
+              </div>
             </button>
 
-            <button 
+            <button
               type="button"
               onClick={() => {
                 void (async () => {
@@ -2274,10 +2282,11 @@ export default function App() {
                 e.preventDefault();
                 void openGalleryGrid();
               }}
-              className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95"
+              className="absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95"
+              aria-label="Abrir galería"
             >
               {lastImage ? (
-                <img src={lastImage} className="w-full h-full object-cover" alt="Ultima foto" />
+                <img src={lastImage} className="w-full h-full object-cover" alt="Última foto" />
               ) : (
                 <History className="w-7 h-7 opacity-40"/>
               )}

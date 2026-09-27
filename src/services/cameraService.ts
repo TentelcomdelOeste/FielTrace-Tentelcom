@@ -80,7 +80,9 @@ export const cameraService = {
           let drawWidth = sourceWidth;
           let drawHeight = sourceHeight;
 
-          const MAX_DIM = 2048;
+          // Preserve the high-resolution capture while keeping a safe WebView canvas ceiling.
+          // The final image is cropped to the camera viewfinder ratio but is no longer forced down to 2048px.
+          const MAX_DIM = 4096;
           if (drawWidth > MAX_DIM || drawHeight > MAX_DIM) {
             if (drawWidth > drawHeight) {
               drawHeight = Math.round((drawHeight * MAX_DIM) / drawWidth);
@@ -260,15 +262,15 @@ export const cameraService = {
                 ctx.drawImage(logoImg, logoX, logoY, targetWidth, targetHeight);
                 ctx.restore();
 
-                resolve(canvas.toDataURL('image/jpeg', 0.90));
+                resolve(canvas.toDataURL('image/jpeg', 0.95));
               } catch (err) {
-                resolve(canvas.toDataURL('image/jpeg', 0.90));
+                resolve(canvas.toDataURL('image/jpeg', 0.95));
               }
             };
-            logoImg.onerror = () => resolve(canvas.toDataURL('image/jpeg', 0.90));
+            logoImg.onerror = () => resolve(canvas.toDataURL('image/jpeg', 0.95));
             logoImg.src = metadata.settings.logoImage;
           } else {
-            resolve(canvas.toDataURL('image/jpeg', 0.90));
+            resolve(canvas.toDataURL('image/jpeg', 0.95));
           }
         } catch (err) {
           console.error('Error drawing overlay:', err);

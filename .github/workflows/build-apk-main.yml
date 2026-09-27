@@ -614,6 +614,24 @@ jobs:
           ! grep -q 'translate-x-\[56px\]\|translate-x-\[68px\]\|translate-x-\[78px\]' src/App.tsx || (echo "ERROR: old shutter offset remains" && exit 1)
           echo "CAMERA_SHUTTER_GRID_AUDIT=PASS"
 
+      - name: VIDEO AUDIO AND SHUTTER AUDIT
+        run: |
+          echo "=== VIDEO AUDIO AND SHUTTER AUDIT ==="
+          grep -q 'col-start-2 flex items-center justify-center' src/App.tsx || (echo "ERROR: video control spacing not updated" && exit 1)
+          grep -q 'col-start-4 flex items-center justify-center' src/App.tsx || (echo "ERROR: photo shutter not centered" && exit 1)
+          grep -q 'disableAudio: false' src/App.tsx || (echo "ERROR: video audio is still disabled" && exit 1)
+          grep -q 'requestPermissions({[[:space:]]*
+        uses: actions/upload-artifact@v4
+        with:
+          name: FieldTrace-apk
+          path: android/app/build/outputs/apk/debug/FieldTrace.apk
+          if-no-files-found: error
+ src/App.tsx || (echo "ERROR: microphone permission request missing" && exit 1)
+          grep -q 'disableAudio: false' src/App.tsx || exit 1
+          grep -q 'android.permission.RECORD_AUDIO' android/app/src/main/AndroidManifest.xml || (echo "ERROR: RECORD_AUDIO permission missing" && exit 1)
+          grep -q 'android.permission.MODIFY_AUDIO_SETTINGS' android/app/src/main/AndroidManifest.xml || (echo "ERROR: MODIFY_AUDIO_SETTINGS permission missing" && exit 1)
+          echo "VIDEO_AUDIO_SHUTTER_AUDIT=PASS"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:

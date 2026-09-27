@@ -140,7 +140,7 @@ public class MainActivity extends BridgeActivity {
   private void refreshNativeWebAssetsIfVersionChanged() {
     try {
       android.content.SharedPreferences prefs = getSharedPreferences("fieldtrace_native_cache", MODE_PRIVATE);
-      int currentVersion = 3;
+      int currentVersion = 4;
       int storedVersion = prefs.getInt("web_asset_version", -1);
       if (storedVersion == currentVersion) return;
 

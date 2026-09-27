@@ -357,7 +357,12 @@ export const exportService = {
     doc.text('Alajuela, Costa Rica', margin, footerY + 4);
     doc.text(`Fecha de impresión: ${new Date().toLocaleString('es-CR')}`, pageWidth - margin, footerY, { align: 'right' });
 
-    const fileName = `Reporte_${project?.name || 'Proyecto'}_${Date.now()}.pdf`;
+    const safeProjectName = String(project?.name || 'Proyecto')
+      .replace(/[\\/:*?"<>|]+/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'Proyecto';
+    const fileName = `Reporte_${safeProjectName}_${Date.now()}.pdf`;
 
     if (Capacitor.isNativePlatform()) {
       const pdfBase64 = doc.output('datauristring').split(',')[1];

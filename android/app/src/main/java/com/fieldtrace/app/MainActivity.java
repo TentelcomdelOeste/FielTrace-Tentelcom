@@ -13,6 +13,8 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.content.ContentUris;
 import android.database.Cursor;
+import android.media.MediaExtractor;
+import android.media.MediaFormat;
 import android.provider.MediaStore;
 import android.os.Bundle;
 import android.util.Base64;
@@ -504,7 +506,7 @@ public class MainActivity extends BridgeActivity {
           VideoMetadataOverlay overlay = new VideoMetadataOverlay(new JSONObject(overlayJson == null ? "{}" : overlayJson));
           MediaItem item = MediaItem.fromUri(Uri.fromFile(input));
           EditedMediaItem edited = new EditedMediaItem.Builder(item)
-              .setRemoveAudio(true)
+              .setRemoveAudio(false)
               .setEffects(new Effects(Collections.emptyList(), Collections.singletonList(
                   new OverlayEffect(Collections.singletonList(overlay)))))
               .build();
@@ -514,6 +516,7 @@ public class MainActivity extends BridgeActivity {
           // while this JS bridge method waits on its own bridge thread.
           Transformer transformer = new Transformer.Builder(MainActivity.this)
               .setVideoMimeType(MimeTypes.VIDEO_H264)
+              .setAudioMimeType(MimeTypes.AUDIO_AAC)
               .addListener(new Transformer.Listener() {
                 @Override public void onCompleted(androidx.media3.transformer.Composition c, ExportResult r) {
                   result[0] = output.getAbsolutePath();
@@ -556,6 +559,7 @@ public class MainActivity extends BridgeActivity {
         info.put("exists", file.isFile() && file.length() > 0);
         info.put("size", file.length());
         info.put("path", file.getAbsolutePath());
+        info.put("audioTracks", countAudioTracks(file));
         return info.toString();
       } catch (Exception e) {
         try {
@@ -567,6 +571,26 @@ public class MainActivity extends BridgeActivity {
           return "{\"exists\":false}";
         }
       }
+    }
+
+    private int countAudioTracks(File file) {
+      if (file == null || !file.isFile() || file.length() <= 0) return 0;
+      MediaExtractor extractor = new MediaExtractor();
+      int audioTracks = 0;
+      try {
+        extractor.setDataSource(file.getAbsolutePath());
+        int trackCount = extractor.getTrackCount();
+        for (int i = 0; i < trackCount; i++) {
+          MediaFormat format = extractor.getTrackFormat(i);
+          String mime = format.getString(MediaFormat.KEY_MIME);
+          if (mime != null && mime.startsWith("audio/")) audioTracks++;
+        }
+      } catch (Exception e) {
+        android.util.Log.w("FieldTraceVideo", "Could not inspect audio tracks: " + e.getMessage());
+      } finally {
+        try { extractor.release(); } catch (Exception ignored) {}
+      }
+      return audioTracks;
     }
 
     private File resolveVideoFile(String path) {

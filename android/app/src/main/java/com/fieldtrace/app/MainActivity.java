@@ -203,6 +203,15 @@ public class MainActivity extends BridgeActivity {
     } catch (Exception ignored) {}
   }
 
+  private void requestDownloadNotificationPermission() {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+          checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9101);
+      }
+    } catch (Exception ignored) {}
+  }
+
   public class FieldTraceBridge {
     @JavascriptInterface
     public void openUri(String uriString) {
@@ -621,15 +630,6 @@ public class MainActivity extends BridgeActivity {
       }
     }
 
-    private void requestDownloadNotificationPermission() {
-      try {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-          requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9101);
-        }
-      } catch (Exception ignored) {}
-    }
-
     @JavascriptInterface
     public String saveExcelToDownloads(String base64Data, String fileName) {
       return saveDocumentToDownloads(base64Data, fileName,
@@ -701,12 +701,12 @@ public class MainActivity extends BridgeActivity {
         openIntent.setDataAndType(uri, mimeType);
         openIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
         PendingIntent pendingIntent = PendingIntent.getActivity(
-            this, (int) System.currentTimeMillis(), openIntent,
+            MainActivity.this, (int) System.currentTimeMillis(), openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
         Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-            ? new Notification.Builder(this, channelId)
-            : new Notification.Builder(this);
+            ? new Notification.Builder(MainActivity.this, channelId)
+            : new Notification.Builder(MainActivity.this);
         builder.setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setContentTitle(title)
             .setContentText(fileName)

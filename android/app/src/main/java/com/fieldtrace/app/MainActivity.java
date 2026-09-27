@@ -1,6 +1,11 @@
 package com.fieldtrace.app;
 
 import android.content.Intent;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Notification;
+import android.provider.Settings;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -10,6 +15,7 @@ import android.content.ContentUris;
 import android.database.Cursor;
 import android.provider.MediaStore;
 import android.os.Bundle;
+import android.Manifest;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
@@ -65,6 +71,7 @@ public class MainActivity extends BridgeActivity {
     showFieldTraceLaunchSplash();
     applyCameraWebViewFixes();
     refreshNativeWebAssetsIfVersionChanged();
+    requestPdfNotificationPermissionIfNeeded();
   }
 
   @Override
@@ -160,6 +167,58 @@ public class MainActivity extends BridgeActivity {
 
       prefs.edit().putInt("web_asset_version", currentVersion).apply();
     } catch (Exception ignored) {}
+  }
+
+  private void requestPdfNotificationPermissionIfNeeded() {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+          checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9101);
+      }
+    } catch (Exception ignored) {}
+  }
+
+  private void notifyPdfDownload(String fileName, Uri uri) {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+          checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9101);
+        return;
+      }
+      final String channelId = "fieldtrace_downloads";
+      NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+      if (manager == null) return;
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        NotificationChannel channel = new NotificationChannel(
+            channelId,
+            "Descargas de Field Trace",
+            NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription("Notificaciones de archivos PDF descargados desde Field Trace");
+        manager.createNotificationChannel(channel);
+      }
+      Intent openIntent = new Intent(Intent.ACTION_VIEW);
+      openIntent.setDataAndType(uri, "application/pdf");
+      openIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+      PendingIntent pendingIntent = PendingIntent.getActivity(
+          this,
+          (int) System.currentTimeMillis(),
+          openIntent,
+          PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+      );
+      Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+          ? new Notification.Builder(this, channelId)
+          : new Notification.Builder(this);
+      builder
+          .setSmallIcon(android.R.drawable.stat_sys_download_done)
+          .setContentTitle("PDF descargado")
+          .setContentText(fileName)
+          .setAutoCancel(true)
+          .setContentIntent(pendingIntent);
+      manager.notify((int) (System.currentTimeMillis() & 0x7fffffff), builder.build());
+    } catch (Exception e) {
+      android.util.Log.e("FieldTracePDF", "Notification failed", e);
+    }
   }
 
   private void applyCameraWebViewFixes() {
@@ -574,6 +633,7 @@ public class MainActivity extends BridgeActivity {
     public String savePdfToDownloads(String base64Data, String fileName) {
       if (base64Data == null || base64Data.trim().isEmpty()) return "";
       String safeName = fileName == null || fileName.trim().isEmpty() ? "FieldTrace_Report.pdf" : fileName.trim();
+      safeName = safeName.replaceAll("[\\\\/:*?\"<>|]+", "_");
       if (!safeName.toLowerCase(Locale.US).endsWith(".pdf")) safeName += ".pdf";
       try {
         byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
@@ -596,6 +656,7 @@ public class MainActivity extends BridgeActivity {
           ContentValues published = new ContentValues();
           published.put(MediaStore.Downloads.IS_PENDING, 0);
           getContentResolver().update(uri, published, null, null);
+          notifyPdfDownload(safeName, uri);
           return uri.toString();
         }
         File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ALBUM_NAME);

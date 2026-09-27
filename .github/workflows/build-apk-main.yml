@@ -620,8 +620,3 @@ jobs:
           name: FieldTrace-apk
           path: android/app/build/outputs/apk/debug/FieldTrace.apk
           if-no-files-found: error
-
-      echo "=== PDF/EXCEL STATIC BUNDLE AUDIT ==="
-      ! grep -R "import(['\\\"]jspdf" -n src || (echo "ERROR: dynamic jsPDF import remains" && exit 1)
-      grep -q "import { jsPDF } from 'jspdf'" src/services/exportService.ts || (echo "ERROR: static jsPDF import missing" && exit 1)
-      echo "NO_DYNAMIC_JSPDF=PASS"

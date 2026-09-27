@@ -611,6 +611,7 @@ public class MainActivity extends BridgeActivity {
           ContentValues published = new ContentValues();
           published.put(MediaStore.Downloads.IS_PENDING, 0);
           getContentResolver().update(uri, published, null, null);
+          notifyFileDownload("PDF descargado", safeName, uri, "application/pdf");
           return uri.toString();
         }
         File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ALBUM_NAME);
@@ -623,6 +624,7 @@ public class MainActivity extends BridgeActivity {
         Intent scan = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
         scan.setData(Uri.fromFile(destination));
         sendBroadcast(scan);
+        notifyFileDownload("PDF descargado", safeName, Uri.fromFile(destination), "application/pdf");
         return destination.getAbsolutePath();
       } catch (Exception e) {
         android.util.Log.e("FieldTracePDF", "Save PDF failed", e);

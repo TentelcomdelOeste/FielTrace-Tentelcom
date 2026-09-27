@@ -613,5 +613,6 @@ jobs:
 
       echo "=== PDF/EXCEL STATIC BUNDLE AUDIT ==="
       ! grep -R "import(['\\\"]jspdf" -n src || (echo "ERROR: dynamic jsPDF import remains" && exit 1)
+      grep -q "currentVersion = 4" android/app/src/main/java/com/fieldtrace/app/MainActivity.java || (echo "ERROR: native web asset cache version is not 4" && exit 1)
       grep -q "import { jsPDF } from 'jspdf'" src/services/exportService.ts || (echo "ERROR: static jsPDF import missing" && exit 1)
       echo "NO_DYNAMIC_JSPDF=PASS"

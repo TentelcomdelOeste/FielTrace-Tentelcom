@@ -252,6 +252,15 @@ jobs:
           grep -q ACCESS_FINE_LOCATION android/app/src/main/AndroidManifest.xml
           grep -q ACCESS_COARSE_LOCATION android/app/src/main/AndroidManifest.xml
           echo "NATIVE FILES AND SPLASH STYLES RESTORED AFTER CAPACITOR SYNC"
+      - name: Restore audio permission after Capacitor sync
+        run: |
+          set -euo pipefail
+          MANIFEST="android/app/src/main/AndroidManifest.xml"
+          grep -q 'android.permission.RECORD_AUDIO' "$MANIFEST" || sed -i '/<uses-permission android:name="android.permission.CAMERA" \/>/a\    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />' "$MANIFEST"
+          grep -q 'android.permission.RECORD_AUDIO' "$MANIFEST"
+          grep -q 'android.permission.MODIFY_AUDIO_SETTINGS' "$MANIFEST"
+          echo "AUDIO PERMISSIONS RESTORED AFTER CAPACITOR SYNC"
+
       - name: Restore persistent APK signing key
         run: |
           set -euo pipefail
@@ -604,15 +613,6 @@ jobs:
         run: |
           test -s android/app/build/outputs/apk/debug/FieldTrace.apk
           echo "APK BUILD AND FINAL AUDIT PASSED"
-      - name: Restore audio permission after Capacitor sync
-        run: |
-          set -euo pipefail
-          MANIFEST="android/app/src/main/AndroidManifest.xml"
-          grep -q 'android.permission.RECORD_AUDIO' "$MANIFEST" || sed -i '/<uses-permission android:name="android.permission.CAMERA" \/>/a\    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />' "$MANIFEST"
-          grep -q 'android.permission.RECORD_AUDIO' "$MANIFEST"
-          grep -q 'android.permission.MODIFY_AUDIO_SETTINGS' "$MANIFEST"
-          echo "AUDIO PERMISSIONS RESTORED AFTER CAPACITOR SYNC"
-
       - name: FINAL CAMERA VIDEO AUDIT
         run: |
           set -euo pipefail

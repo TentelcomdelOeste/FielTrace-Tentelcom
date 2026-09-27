@@ -827,6 +827,19 @@ export default function App() {
     }
   };
 
+  const handleGeneratePDF = async () => {
+    if (!selectedProject?.id) {
+      alert('Selecciona un proyecto antes de generar el PDF.');
+      return;
+    }
+    try {
+      await exportService.generatePDF(selectedProject.id);
+      alert('PDF generado correctamente. Revisa Descargas > Field Trace.');
+    } catch (error) {
+      alert(`No se pudo generar el PDF: ${error instanceof Error ? error.message : 'error desconocido'}`);
+    }
+  };
+
   const stopVideoRecording = async () => {
     if (!isRecordingVideo || videoProcessing) return;
     setVideoProcessing(true);
@@ -1397,7 +1410,7 @@ export default function App() {
                      <span className="text-[9px] font-black text-green-800 uppercase">Excel (.xlsx)</span>
                    </button>
                    <button 
-                    onClick={() => void exportService.generatePDF(selectedProject!.id!).catch((e) => alert(`No se pudo generar el PDF: ${e instanceof Error ? e.message : 'error desconocido'}`))}
+                    onClick={handleGeneratePDF}
                     className="py-4 bg-[#FEF2F2] border border-red-200 rounded-[1.5rem] flex flex-col items-center gap-2 group transition-all active:scale-95 shadow-sm"
                    >
                      <FileText className="w-6 h-6 text-red-600"/>
@@ -1520,7 +1533,7 @@ export default function App() {
                     <h3 className="text-[11px] font-black uppercase text-gray-500 tracking-widest">Resumen de Materiales</h3>
                     <div className="flex gap-2">
                        <button onClick={() => exportService.generateExcel(selectedProject.id!)} className="p-2 bg-green-50 text-green-600 rounded-lg"><FileSpreadsheet className="w-4 h-4" /></button>
-                       <button onClick={() => void exportService.generatePDF(selectedProject.id!).catch((e) => alert(`No se pudo generar el PDF: ${e instanceof Error ? e.message : 'error desconocido'}`))} className="p-2 bg-red-50 text-red-600 rounded-lg"><FileText className="w-4 h-4" /></button>
+                       <button onClick={handleGeneratePDF} className="p-2 bg-red-50 text-red-600 rounded-lg"><FileText className="w-4 h-4" /></button>
                     </div>
                   </div>
                   <div className="p-6 space-y-4">
@@ -2240,12 +2253,12 @@ export default function App() {
                 type="button"
                 onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}
                 disabled={videoProcessing}
-                className={`h-11 min-w-[58px] px-2.5 rounded-xl border border-white/20 active:scale-95 transition-all flex items-center justify-center gap-1.5 ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500/90 text-white'} disabled:opacity-50`}
+                className={`h-16 w-16 rounded-full border-2 border-white/80 shadow-lg active:scale-95 transition-all flex items-center justify-center ${isRecordingVideo ? 'bg-red-600 text-white ring-4 ring-red-300/40' : 'bg-red-500/95 text-white'} disabled:opacity-50`}
                 title={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
                 aria-label={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
               >
-                {isRecordingVideo ? <Square className="w-4 h-4 fill-white" /> : <Video className="w-4 h-4" />}
-                <span className="text-[9px] font-black tracking-wide">{isRecordingVideo ? 'DETENER' : 'VIDEO'}</span>
+                {isRecordingVideo ? <Square className="w-6 h-6 fill-white" /> : <Video className="w-7 h-7" />}
+                
               </button>
               <button
                 type="button"

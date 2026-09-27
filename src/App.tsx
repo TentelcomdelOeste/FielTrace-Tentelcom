@@ -827,6 +827,18 @@ export default function App() {
     }
   };
 
+  const handleGeneratePDF = async () => {
+    if (!selectedProject?.id) {
+      alert('Selecciona un proyecto antes de generar el PDF.');
+      return;
+    }
+    try {
+      await exportService.generatePDF(selectedProject.id);
+    } catch (error) {
+      alert(`No se pudo generar el PDF: ${error instanceof Error ? error.message : 'error desconocido'}`);
+    }
+  };
+
   const stopVideoRecording = async () => {
     if (!isRecordingVideo || videoProcessing) return;
     setVideoProcessing(true);
@@ -1397,7 +1409,7 @@ export default function App() {
                      <span className="text-[9px] font-black text-green-800 uppercase">Excel (.xlsx)</span>
                    </button>
                    <button 
-                    onClick={() => void exportService.generatePDF(selectedProject!.id!).catch((e) => alert(`No se pudo generar el PDF: ${e instanceof Error ? e.message : 'error desconocido'}`))}
+                    onClick={handleGeneratePDF}
                     className="py-4 bg-[#FEF2F2] border border-red-200 rounded-[1.5rem] flex flex-col items-center gap-2 group transition-all active:scale-95 shadow-sm"
                    >
                      <FileText className="w-6 h-6 text-red-600"/>
@@ -1520,7 +1532,7 @@ export default function App() {
                     <h3 className="text-[11px] font-black uppercase text-gray-500 tracking-widest">Resumen de Materiales</h3>
                     <div className="flex gap-2">
                        <button onClick={() => exportService.generateExcel(selectedProject.id!)} className="p-2 bg-green-50 text-green-600 rounded-lg"><FileSpreadsheet className="w-4 h-4" /></button>
-                       <button onClick={() => void exportService.generatePDF(selectedProject.id!).catch((e) => alert(`No se pudo generar el PDF: ${e instanceof Error ? e.message : 'error desconocido'}`))} className="p-2 bg-red-50 text-red-600 rounded-lg"><FileText className="w-4 h-4" /></button>
+                       <button onClick={handleGeneratePDF} className="p-2 bg-red-50 text-red-600 rounded-lg"><FileText className="w-4 h-4" /></button>
                     </div>
                   </div>
                   <div className="p-6 space-y-4">
@@ -2230,36 +2242,40 @@ export default function App() {
           </div>
 
           {/* Shutter Bar */}
-          <div className="h-[76px] py-1.5 px-8 bg-black flex items-center justify-between shrink-0 border-t border-white/10">
-            <button onClick={() => { setCameraZoom(1); setFlashMode('off'); setCameraFacing('rear'); setCurrentStep('history'); }} className="w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white">
+          <div className="relative h-[76px] py-1.5 px-8 bg-black border-t border-white/10 shrink-0">
+            <button
+              onClick={() => { setCameraZoom(1); setFlashMode('off'); setCameraFacing('rear'); setCurrentStep('history'); }}
+              className="absolute left-8 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/10 flex items-center justify-center border border-white/10 text-white"
+              aria-label="Volver"
+            >
               <ArrowLeft className="w-6 h-6"/>
             </button>
-            
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}
-                disabled={videoProcessing}
-                className={`h-11 min-w-[58px] px-2.5 rounded-xl border border-white/20 active:scale-95 transition-all flex items-center justify-center gap-1.5 ${isRecordingVideo ? 'bg-red-600 text-white' : 'bg-red-500/90 text-white'} disabled:opacity-50`}
-                title={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
-                aria-label={isRecordingVideo ? 'DETENER VIDEO' : 'GRABAR VIDEO'}
-              >
-                {isRecordingVideo ? <Square className="w-4 h-4 fill-white" /> : <Video className="w-4 h-4" />}
-                <span className="text-[9px] font-black tracking-wide">{isRecordingVideo ? 'DETENER' : 'VIDEO'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={captureBatchPhoto}
-                disabled={isRecordingVideo || videoProcessing}
-                className="w-16 h-16 bg-white rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform disabled:opacity-40"
-                title="Capturar fotografía"
-                aria-label="Capturar fotografía"
-              >
-                <div className="w-full h-full bg-white rounded-full shadow-inner flex items-center justify-center"><div className="w-10 h-10 border-4 border-gray-100 rounded-full"></div></div>
-              </button>
-            </div>
 
-            <button 
+            <button
+              type="button"
+              onClick={captureBatchPhoto}
+              disabled={isRecordingVideo || videoProcessing}
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[72px] h-[72px] bg-white rounded-full p-1 border-[6px] border-white/20 active:scale-95 transition-transform disabled:opacity-40"
+              title="Capturar fotografía"
+              aria-label="Capturar fotografía"
+            >
+              <div className="w-full h-full bg-white rounded-full shadow-inner flex items-center justify-center">
+                <div className="w-11 h-11 border-4 border-gray-100 rounded-full"></div>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}
+              disabled={videoProcessing}
+              className={`absolute left-1/2 top-1/2 -translate-x-[62px] -translate-y-1/2 w-[52px] h-[52px] rounded-full border-2 border-white/80 shadow-lg active:scale-95 transition-all flex items-center justify-center ${isRecordingVideo ? 'bg-red-600 text-white ring-4 ring-red-300/40' : 'bg-red-500/95 text-white'} disabled:opacity-50`}
+              title={isRecordingVideo ? 'Detener grabación' : 'Grabar video'}
+              aria-label={isRecordingVideo ? 'Detener grabación' : 'Grabar video'}
+            >
+              {isRecordingVideo ? <Square className="w-7 h-7 fill-white" /> : <Video className="w-8 h-8" />}
+            </button>
+
+            <button
               type="button"
               onClick={() => {
                 void (async () => {
@@ -2277,7 +2293,7 @@ export default function App() {
                 e.preventDefault();
                 void openGalleryGrid();
               }}
-              className="w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95"
+              className="absolute right-8 top-1/2 -translate-y-1/2 w-12 h-12 rounded-xl bg-white/10 overflow-hidden border border-white/20 flex items-center justify-center text-white active:scale-95"
             >
               {lastImage ? (
                 <img src={lastImage} className="w-full h-full object-cover" alt="Ultima foto" />

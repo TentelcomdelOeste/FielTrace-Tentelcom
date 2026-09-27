@@ -71,6 +71,7 @@ public class MainActivity extends BridgeActivity {
     showFieldTraceLaunchSplash();
     applyCameraWebViewFixes();
     refreshNativeWebAssetsIfVersionChanged();
+    requestPdfNotificationPermissionIfNeeded();
   }
 
   @Override
@@ -165,6 +166,15 @@ public class MainActivity extends BridgeActivity {
       }
 
       prefs.edit().putInt("web_asset_version", currentVersion).apply();
+    } catch (Exception ignored) {}
+  }
+
+  private void requestPdfNotificationPermissionIfNeeded() {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+          checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9101);
+      }
     } catch (Exception ignored) {}
   }
 

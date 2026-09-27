@@ -773,6 +773,16 @@ export default function App() {
     try {
       capturingRef.current = true;
       videoStartedAtRef.current = Date.now();
+
+      // Video recording uses the microphone. Request both camera and microphone
+      // permissions before starting the native recorder.
+      const permissionStatus = await CameraPreview.requestPermissions({
+        disableAudio: false,
+        showSettingsAlert: true,
+      });
+      if (permissionStatus?.microphone === 'denied') {
+        throw new Error('Permiso de micrófono denegado. Habilítalo en Ajustes > Aplicaciones > Field Trace > Permisos > Micrófono.');
+      }
       videoRecordingPathRef.current = null;
 
       // Use the camera's real capabilities instead of assuming every device
@@ -811,7 +821,7 @@ export default function App() {
         videoQuality: quality as any,
         videoCodec: codec as any,
         frameRate,
-        disableAudio: true,
+        disableAudio: false,
         mirrorFrontCamera: false,
       });
 
@@ -2242,7 +2252,7 @@ export default function App() {
               </button>
             </div>
 
-            <div className="col-start-3 flex items-center justify-center">
+            <div className="col-start-2 flex items-center justify-center">
               <button
                 type="button"
                 onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}

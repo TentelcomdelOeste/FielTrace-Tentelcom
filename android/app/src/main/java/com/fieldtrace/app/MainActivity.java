@@ -1,6 +1,11 @@
 package com.fieldtrace.app;
 
 import android.content.Intent;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Notification;
+import android.Manifest;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
@@ -65,6 +70,7 @@ public class MainActivity extends BridgeActivity {
     showFieldTraceLaunchSplash();
     applyCameraWebViewFixes();
     refreshNativeWebAssetsIfVersionChanged();
+    requestDownloadNotificationPermission();
   }
 
   @Override
@@ -194,6 +200,15 @@ public class MainActivity extends BridgeActivity {
           webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
         } catch (Exception ignored) {}
       });
+    } catch (Exception ignored) {}
+  }
+
+  private void requestDownloadNotificationPermission() {
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+          checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9101);
+      }
     } catch (Exception ignored) {}
   }
 
@@ -612,6 +627,94 @@ public class MainActivity extends BridgeActivity {
       } catch (Exception e) {
         android.util.Log.e("FieldTracePDF", "Save PDF failed", e);
         return "";
+      }
+    }
+
+    @JavascriptInterface
+    public String saveExcelToDownloads(String base64Data, String fileName) {
+      return saveDocumentToDownloads(base64Data, fileName,
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Excel descargado");
+    }
+
+    private String saveDocumentToDownloads(String base64Data, String fileName, String mimeType, String notificationTitle) {
+      if (base64Data == null || base64Data.trim().isEmpty()) return "";
+      String safeName = fileName == null || fileName.trim().isEmpty() ? "FieldTrace_Report.xlsx" : fileName.trim();
+      safeName = safeName.replaceAll("[\\\\/:*?\"<>|]+", "_");
+      try {
+        byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          ContentValues values = new ContentValues();
+          values.put(MediaStore.Downloads.DISPLAY_NAME, safeName);
+          values.put(MediaStore.Downloads.MIME_TYPE, mimeType);
+          values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/" + ALBUM_NAME + "/");
+          values.put(MediaStore.Downloads.IS_PENDING, 1);
+          Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+          if (uri == null) return "";
+          try (java.io.OutputStream out = getContentResolver().openOutputStream(uri)) {
+            if (out == null) throw new IllegalStateException("DOCUMENT_OUTPUT_STREAM_NULL");
+            out.write(bytes);
+            out.flush();
+          } catch (Exception copyError) {
+            try { getContentResolver().delete(uri, null, null); } catch (Exception ignored) {}
+            throw copyError;
+          }
+          ContentValues published = new ContentValues();
+          published.put(MediaStore.Downloads.IS_PENDING, 0);
+          getContentResolver().update(uri, published, null, null);
+          notifyFileDownload(notificationTitle, safeName, uri, mimeType);
+          return uri.toString();
+        }
+        File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ALBUM_NAME);
+        if (!dir.exists() && !dir.mkdirs()) return "";
+        File destination = new File(dir, safeName);
+        try (FileOutputStream out = new FileOutputStream(destination)) {
+          out.write(bytes);
+          out.flush();
+        }
+        Intent scan = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+        scan.setData(Uri.fromFile(destination));
+        sendBroadcast(scan);
+        notifyFileDownload(notificationTitle, safeName, Uri.fromFile(destination), mimeType);
+        return destination.getAbsolutePath();
+      } catch (Exception e) {
+        android.util.Log.e("FieldTraceDownload", "Save document failed", e);
+        return "";
+      }
+    }
+
+    private void notifyFileDownload(String title, String fileName, Uri uri, String mimeType) {
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+          requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 9101);
+          return;
+        }
+        final String channelId = "fieldtrace_downloads";
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          NotificationChannel channel = new NotificationChannel(channelId, "Descargas de Field Trace", NotificationManager.IMPORTANCE_DEFAULT);
+          channel.setDescription("Notificaciones de archivos descargados desde Field Trace");
+          manager.createNotificationChannel(channel);
+        }
+        Intent openIntent = new Intent(Intent.ACTION_VIEW);
+        openIntent.setDataAndType(uri, mimeType);
+        openIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+            MainActivity.this, (int) System.currentTimeMillis(), openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ? new Notification.Builder(MainActivity.this, channelId)
+            : new Notification.Builder(MainActivity.this);
+        builder.setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle(title)
+            .setContentText(fileName)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent);
+        manager.notify((int) (System.currentTimeMillis() & 0x7fffffff), builder.build());
+      } catch (Exception e) {
+        android.util.Log.e("FieldTraceDownload", "Notification failed", e);
       }
     }
 

@@ -7,6 +7,7 @@ import { storageService } from '../services/storageService';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
+import { utils, write } from 'xlsx';
 
 async function handleNativeExport(
   fileName: string,
@@ -50,7 +51,6 @@ async function handleNativeExport(
 
 export const exportService = {
   async generateExcel(projectId: number) {
-    const { utils, write } = await import('xlsx');
     const project = await storageService.getProject(projectId);
     const evidences = await storageService.getEvidencesByProject(projectId);
     
@@ -70,14 +70,39 @@ export const exportService = {
     const wb = utils.book_new();
     utils.book_append_sheet(wb, ws, "Evidencias");
     
-    const fileName = `Reporte_${project?.name || 'Proyecto'}_${Date.now()}.xlsx`;
+    const safeProjectName = String(project?.name || 'Proyecto')
+      .replace(/[\\/:*?"<>|]+/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'Proyecto';
+    const fileName = `Reporte_${safeProjectName}_${Date.now()}.xlsx`;
     const excelBuffer = write(wb, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
 
-    if (!(await handleNativeExport(fileName, blob))) {
-      const { writeFile } = await import('xlsx');
-      writeFile(wb, fileName);
+    if (Capacitor.isNativePlatform()) {
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onloadend = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('No se pudo preparar el Excel'));
+        reader.onerror = () => reject(new Error('No se pudo preparar el Excel'));
+        reader.readAsDataURL(blob);
+      });
+      const base64Data = dataUrl.split(',')[1];
+      const native = (window as any).FieldTraceNative;
+      if (native && typeof native.saveExcelToDownloads === 'function') {
+        const savedUri = String(native.saveExcelToDownloads(base64Data, fileName) || '');
+        if (!savedUri) throw new Error('No se pudo guardar el Excel en Descargas/Field Trace');
+        console.log('[Excel] saved:', savedUri);
+        return savedUri;
+      }
+      if (!(await handleNativeExport(fileName, blob, 'blob', false))) {
+        throw new Error('No se pudo guardar el Excel en el dispositivo');
+      }
+      return true;
     }
+
+    const { writeFile } = await import('xlsx');
+    writeFile(wb, fileName);
+    return true;
   },
 
   async generatePDF(projectId: number) {

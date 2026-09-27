@@ -911,6 +911,46 @@ export default function App() {
     }
   };
 
+  // Resolve the best safe native photo size for the active lens.
+  // We keep a 4096px safety ceiling so high-megapixel devices do not flood
+  // the WebView/Capacitor bridge with an unnecessarily huge base64 payload.
+  const getBestPhotoCaptureSize = async (facing: 'rear' | 'front') => {
+    const SAFE_MAX_DIM = 4096;
+    try {
+      const result = await CameraPreview.getSupportedPictureSizes();
+      const groups = Array.isArray(result?.supportedPictureSizes) ? result.supportedPictureSizes : [];
+      const activeGroup = groups.find((group: any) => String(group?.facing || '').toLowerCase() === facing);
+      const sizes = Array.isArray(activeGroup?.supportedPictureSizes)
+        ? activeGroup.supportedPictureSizes
+            .map((size: any) => ({ width: Number(size?.width), height: Number(size?.height) }))
+            .filter((size: any) => Number.isFinite(size.width) && Number.isFinite(size.height) && size.width > 0 && size.height > 0)
+        : [];
+
+      if (!sizes.length) {
+        return { width: 4096, height: 4096 };
+      }
+
+      const largest = [...sizes].sort((a, b) => (b.width * b.height) - (a.width * a.height))[0];
+      const largestDimension = Math.max(largest.width, largest.height);
+
+      if (largestDimension <= SAFE_MAX_DIM) {
+        console.log('[Camera] selected native photo size:', { facing, ...largest });
+        return largest;
+      }
+
+      const scale = SAFE_MAX_DIM / largestDimension;
+      const safeSize = {
+        width: Math.round(largest.width * scale),
+        height: Math.round(largest.height * scale),
+      };
+      console.log('[Camera] selected safe high-resolution photo size:', { facing, source: largest, output: safeSize });
+      return safeSize;
+    } catch (error) {
+      console.warn('[Camera] getSupportedPictureSizes unavailable; using safe fallback:', error);
+      return { width: 4096, height: 4096 };
+    }
+  };
+
   const captureBatchPhoto = async () => {
     // Anti doble-tap con ref (sin spinner ni disabled en el botón)
     if (!selectedProject || capturingRef.current) return;
@@ -918,7 +958,13 @@ export default function App() {
 
     try {
       // Captura física: único await. El botón NO se bloquea visualmente.
-      const captureResult = await CameraPreview.capture({ width: 1920, quality: 80, format: 'jpeg' });
+      const photoSize = await getBestPhotoCaptureSize(cameraFacing);
+      const captureResult = await CameraPreview.capture({
+        width: photoSize.width,
+        height: photoSize.height,
+        quality: 95,
+        format: 'jpeg',
+      });
       const capturedValue = captureResult?.value;
       const rawImage = capturedValue ? (capturedValue.startsWith('data:') ? capturedValue : `data:image/jpeg;base64,${capturedValue}`) : null;
       if (!rawImage) throw new Error('No se pudo capturar la imagen con la cámara nativa');

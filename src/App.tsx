@@ -358,7 +358,7 @@ export default function App() {
 
     (async () => {
       try {
-        await CameraPreview.start({ position: cameraFacing, toBack: true, aspectRatio: 'fill', aspectMode: 'cover', storeToFile: false, disableAudio: true, enableVideoMode: true, videoQuality: '1080p', videoCodec: 'avc1', initialZoomLevel: 1, rotateWhenOrientationChanged: true });
+        await CameraPreview.start({ position: cameraFacing, toBack: true, aspectRatio: 'fill', aspectMode: 'cover', storeToFile: false, disableAudio: false, enableVideoMode: true, videoQuality: '1080p', videoCodec: 'avc1', initialZoomLevel: 1, rotateWhenOrientationChanged: true });
         if (!active) return;
         await CameraPreview.setZoom({ level: cameraZoom });
         await ensureFlashArmed(flashMode);
@@ -861,7 +861,10 @@ export default function App() {
         if (!info?.exists || Number(info.size || 0) <= 0) {
           throw new Error('El archivo original de video está vacío');
         }
-        console.log('[Video] raw file verified:', info);
+        if (info.audioTracks !== undefined && Number(info.audioTracks || 0) < 1) {
+          throw new Error('La cámara generó el video sin pista de audio. No se publicará un video silencioso.');
+        }
+        console.log('[Video] raw file verified with audio:', info);
       }
 
       const overlayConfig = buildVideoOverlayConfig();
@@ -877,7 +880,10 @@ export default function App() {
         if (!finalInfo?.exists || Number(finalInfo.size || 0) <= 0) {
           throw new Error('El video final con overlay está vacío');
         }
-        console.log('[Video] overlay file verified:', finalInfo);
+        if (finalInfo.audioTracks !== undefined && Number(finalInfo.audioTracks || 0) < 1) {
+          throw new Error('El compositor eliminó la pista de audio. No se publicará un video silencioso.');
+        }
+        console.log('[Video] overlay file verified with audio:', finalInfo);
       }
 
       const uuid = crypto.randomUUID ? crypto.randomUUID() : 'vid_' + Date.now() + Math.random().toString(36).slice(2);

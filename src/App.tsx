@@ -2268,7 +2268,7 @@ export default function App() {
               type="button"
               onClick={() => void (isRecordingVideo ? stopVideoRecording() : startVideoRecording())}
               disabled={videoProcessing}
-              className={`absolute left-1/2 top-1/2 -translate-x-[62px] -translate-y-1/2 w-[52px] h-[52px] rounded-full border-2 border-white/80 shadow-lg active:scale-95 transition-all flex items-center justify-center ${isRecordingVideo ? 'bg-red-600 text-white ring-4 ring-red-300/40' : 'bg-red-500/95 text-white'} disabled:opacity-50`}
+              className={`absolute left-1/2 top-1/2 -translate-x-[96px] -translate-y-1/2 w-[48px] h-[48px] rounded-full border-2 border-white/80 shadow-lg active:scale-95 transition-all flex items-center justify-center ${isRecordingVideo ? 'bg-red-600 text-white ring-4 ring-red-300/40' : 'bg-red-500/95 text-white'} disabled:opacity-50`}
               title={isRecordingVideo ? 'Detener grabación' : 'Grabar video'}
               aria-label={isRecordingVideo ? 'Detener grabación' : 'Grabar video'}
             >
